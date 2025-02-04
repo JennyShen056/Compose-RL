@@ -33,7 +33,7 @@ __all__ = [
     "RewardModel",
     "ComposerMPTPairwiseRewardModel",
     "ComposerHFPairwiseRewardModel",
-    'ComposerHFClassifierRewardModel', 
+    "ComposerHFClassifierRewardModel", 
     "InferenceRewardModel",
     "BadGenerationEndReward",
     "IncreasingNumbersReward",
