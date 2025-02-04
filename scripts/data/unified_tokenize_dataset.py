@@ -113,7 +113,7 @@ class UnifiedTokenizedDataset(IterableDataset):
             sample (Any): A sample from the dataset.
         """
         text = sample["text"]
-        label = sample["label"]  # Regression label (continuous reward score)
+        labels = sample["labels"]  # Regression label (continuous reward score)
 
         # Tokenizing the text using the chat template
         messages = [
@@ -129,7 +129,7 @@ class UnifiedTokenizedDataset(IterableDataset):
 
         return {
             "text": np.asarray(encoded_text).tobytes(),
-            "label": np.asarray([label], dtype=np.float32).tobytes(),
+            "labels": np.asarray([labels], dtype=np.float32).tobytes(),
         }
 
 
@@ -153,7 +153,7 @@ def main(
         },
         "regression": {
             "text": "bytes",
-            "label": "bytes",
+            "labels": "bytes",
         },
     }[dataset_type]
 
