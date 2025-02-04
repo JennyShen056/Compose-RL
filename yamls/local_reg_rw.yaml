@@ -9,7 +9,7 @@ seed: 17
 #     run: "{run_name}"
 
 model:
-  name: hf_pairwise_rm
+  name: hf_regression_rm
   pretrained_model_name_or_path: meta-llama/Meta-Llama-3.1-8B-Instruct
   pretrained: true
   loss_type: bce
@@ -19,9 +19,9 @@ model:
   use_auth_token: true
   init_device: mixed
   additional_train_metrics:
-    - pairwise_rm_accuracy
+    - regression_rm_mse
   additional_eval_metrics:
-    - pairwise_rm_accuracy
+    - regression_rm_mse
 
 callbacks:
   lr_monitor: {}

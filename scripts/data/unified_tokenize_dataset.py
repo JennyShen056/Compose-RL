@@ -1,7 +1,7 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""A unified script to create prompt datasets for different data types."""
+"""A unified script to create prompt datasets for different data types, including regression reward modeling."""
 
 import argparse
 import os
@@ -18,11 +18,11 @@ class UnifiedTokenizedDataset(IterableDataset):
     """An IterableDataset that returns token samples.
 
     Args:
-        dataset_name (str): the name of the hf dataset to process
-        split (str): the split of the hf dataset to process
-        tokenizer (PreTrainedTokenizerBase): the tokenizer used to process the dataset
-        max_length (int): the maximum length of each sample
-        dataset_type (str): type of dataset ('preference' or 'single_prompt')
+        dataset_name (str): The name of the HF dataset to process.
+        split (str): The split of the HF dataset to process.
+        tokenizer (PreTrainedTokenizerBase): The tokenizer used to process the dataset.
+        max_length (int): The maximum length of each sample.
+        dataset_type (str): Type of dataset ('preference', 'single_prompt', 'regression').
     """
 
     def __init__(
@@ -31,16 +31,16 @@ class UnifiedTokenizedDataset(IterableDataset):
         split: str,
         tokenizer: PreTrainedTokenizerBase,
         max_length: int,
-        dataset_type: Literal['preference', 'single_prompt'],
+        dataset_type: Literal["preference", "single_prompt", "regression"],
     ):
         self.tokenizer = tokenizer
-        os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
         self.max_length = max_length
         self.dataset_type = dataset_type
 
-        print(f'Dataset name: {dataset_name}')
-        print(f'Processing split: {split}')
-        print(f'Processing dataset type: {dataset_type}')
+        print(f"Dataset name: {dataset_name}")
+        print(f"Processing split: {split}")
+        print(f"Processing dataset type: {dataset_type}")
 
         self.hf_dataset = hf_datasets.load_dataset(
             path=dataset_name,
@@ -50,21 +50,23 @@ class UnifiedTokenizedDataset(IterableDataset):
 
     def __iter__(self) -> Iterator[dict[str, bytes]]:
         for sample in self.hf_dataset:
-            if self.dataset_type == 'preference':
+            if self.dataset_type == "preference":
                 yield self._process_preference_sample(sample)
-            elif self.dataset_type == 'single_prompt':
+            elif self.dataset_type == "single_prompt":
                 result = self._process_single_prompt_sample(sample)
                 if result is not None:
                     yield result
+            elif self.dataset_type == "regression":
+                yield self._process_regression_sample(sample)
 
     def _process_preference_sample(self, sample: Any):
         """Process a preference sample.
 
         Args:
-            sample (Any): a sample from the dataset
+            sample (Any): A sample from the dataset.
         """
-        chosen_messages = sample['chosen']
-        rejected_messages = sample['rejected']
+        chosen_messages = sample["chosen"]
+        rejected_messages = sample["rejected"]
 
         curr_chosen = self.tokenizer.apply_chat_template(
             chosen_messages,
@@ -76,23 +78,23 @@ class UnifiedTokenizedDataset(IterableDataset):
         )
 
         return {
-            'chosen': np.asarray(curr_chosen).tobytes(),
-            'rejected': np.asarray(curr_rejected).tobytes(),
+            "chosen": np.asarray(curr_chosen).tobytes(),
+            "rejected": np.asarray(curr_rejected).tobytes(),
         }
 
     def _process_single_prompt_sample(self, sample: Any):
-        """Process a prompt sample.
+        """Process a single prompt sample.
 
         Args:
-            sample (Any): a sample from the dataset
+            sample (Any): A sample from the dataset.
         """
-        prompt = sample['prompt']
-        messages = [{
-            'role':
-                'user',
-            'content':
-                f'Can you summarize the following content in 50 words or less: {prompt}',
-        }]
+        prompt = sample["prompt"]
+        messages = [
+            {
+                "role": "user",
+                "content": f"Can you summarize the following content in 50 words or less: {prompt}",
+            }
+        ]
         encoded_prompt = self.tokenizer.apply_chat_template(
             messages,
             tokenize=True,
@@ -102,7 +104,33 @@ class UnifiedTokenizedDataset(IterableDataset):
         if len(encoded_prompt) > self.max_length:
             return None
 
-        return {'prompt': np.asarray(encoded_prompt).tobytes()}
+        return {"prompt": np.asarray(encoded_prompt).tobytes()}
+
+    def _process_regression_sample(self, sample: Any):
+        """Process a regression reward modeling sample.
+
+        Args:
+            sample (Any): A sample from the dataset.
+        """
+        text = sample["text"]
+        label = sample["label"]  # Regression label (continuous reward score)
+
+        # Tokenizing the text using the chat template
+        messages = [
+            {
+                "role": "user",
+                "content": text,
+            }
+        ]
+        encoded_text = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+        )
+
+        return {
+            "text": np.asarray(encoded_text).tobytes(),
+            "label": np.asarray([label], dtype=np.float32).tobytes(),
+        }
 
 
 def main(
@@ -112,16 +140,20 @@ def main(
     hashes: list[str],
     splits: list[str],
     tokenizer_name: str,
-    dataset_type: Literal['preference', 'single_prompt'],
+    dataset_type: Literal["preference", "single_prompt", "regression"],
     max_length: int = 2048,
 ):
     columns = {
-        'preference': {
-            'chosen': 'bytes',
-            'rejected': 'bytes',
+        "preference": {
+            "chosen": "bytes",
+            "rejected": "bytes",
         },
-        'single_prompt': {
-            'prompt': 'bytes',
+        "single_prompt": {
+            "prompt": "bytes",
+        },
+        "regression": {
+            "text": "bytes",
+            "label": "bytes",
         },
     }[dataset_type]
 
@@ -131,7 +163,7 @@ def main(
     )
     tokenizer.model_max_length = int(1e30)
 
-    print(f'Using tokenizer: {tokenizer}')
+    print(f"Using tokenizer: {tokenizer}")
 
     num_written = 0
     for split in splits:
@@ -149,51 +181,51 @@ def main(
                 dataset_type=dataset_type,
             )
 
-            print('Converting to MDS format')
+            print("Converting to MDS format")
 
             for sample in dataset:
                 num_written += 1
                 out.write(sample)
 
-        print(f'Finished writing {num_written} samples')
-    print('Finished converting')
-    print('Dataset has:', num_written, 'samples')
+        print(f"Finished writing {num_written} samples")
+    print("Finished converting")
+    print("Dataset has:", num_written, "samples")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--dataset_name',
+        "--dataset_name",
         type=str,
         required=True,
-        help='Name of the dataset to process',
+        help="Name of the dataset to process",
     )
-    parser.add_argument('--compression', type=str, default='zstd')
-    parser.add_argument('--local_dir', type=str, required=True)
+    parser.add_argument("--compression", type=str, default="zstd")
+    parser.add_argument("--local_dir", type=str, required=True)
     parser.add_argument(
-        '--hashes',
+        "--hashes",
         type=str,
-        nargs='+',
-        default=['sha1', 'xxh64'],
+        nargs="+",
+        default=["sha1", "xxh64"],
     )
-    parser.add_argument('--splits', type=str, nargs='+', default=['train'])
+    parser.add_argument("--splits", type=str, nargs="+", default=["train"])
     parser.add_argument(
-        '--tokenizer_name',
+        "--tokenizer_name",
         type=str,
-        default='rajammanabrolu/gpt-4-chat',
+        default="rajammanabrolu/gpt-4-chat",
     )
     parser.add_argument(
-        '--dataset_type',
+        "--dataset_type",
         type=str,
-        choices=['preference', 'single_prompt'],
+        choices=["preference", "single_prompt", "regression"],
         required=True,
-        help='Type of dataset to process',
+        help="Type of dataset to process",
     )
     parser.add_argument(
-        '--max_length',
+        "--max_length",
         type=int,
         default=2048,
-        help='Maximum length of tokenized samples',
+        help="Maximum length of tokenized samples",
     )
 
     args = parser.parse_args()
