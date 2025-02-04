@@ -29,7 +29,9 @@ from compose_rl.reward_learning.hf_utils import AutoModelForCausalLMWithRM
 from tests.common import PairwisePreference, world_size
 
 
-def get_config(conf_path: str = './yamls/testing.yaml',) -> DictConfig:
+def get_config(
+    conf_path: str = "./yamls/testing.yaml",
+) -> DictConfig:
     with open(conf_path) as f:
         test_cfg = om.load(f)
     return cast(DictConfig, test_cfg)
@@ -46,14 +48,14 @@ def _load_tokenizer_cfg(cfg: Union[dict[str, Any], DictConfig]) -> dict:
 
 def _get_objs(
     request: pytest.FixtureRequest,
-    conf_path: str = './yamls/testing.yaml',
+    conf_path: str = "./yamls/testing.yaml",
     model_config_overrides: Optional[dict] = None,
-    attn_impl: str = 'torch',
+    attn_impl: str = "torch",
     is_hf: bool = False,
 ):
     warnings.filterwarnings(
-        action='ignore',
-        message='Torchmetrics v0.9 introduced a new argument class property',
+        action="ignore",
+        message="Torchmetrics v0.9 introduced a new argument class property",
     )
     test_cfg = get_config(conf_path=conf_path)
     if model_config_overrides is not None:
@@ -61,27 +63,31 @@ def _get_objs(
             test_cfg.model[k] = v
 
     # Read FSDP Config as a dict
-    fsdp_config = test_cfg.get('fsdp_config', None)
-    fsdp_config = om.to_container(
-        fsdp_config,
-        resolve=True,
-    ) if fsdp_config else None
+    fsdp_config = test_cfg.get("fsdp_config", None)
+    fsdp_config = (
+        om.to_container(
+            fsdp_config,
+            resolve=True,
+        )
+        if fsdp_config
+        else None
+    )
 
     # Check if we are running on GPU
     is_gpu = False
     for item in request.session.items:
-        is_gpu |= item.get_closest_marker('gpu') is not None
+        is_gpu |= item.get_closest_marker("gpu") is not None
 
     # Build Model
     # For fast initialization, use `meta` device
     if not is_hf:
-        device = 'cuda' if is_gpu else 'cpu'
+        device = "cuda" if is_gpu else "cpu"
     else:
-        device = 'cpu'
-    test_cfg.precision = 'amp_bf16' if is_gpu else 'fp32'
+        device = "cpu"
+    test_cfg.precision = "amp_bf16" if is_gpu else "fp32"
     if not is_hf:
         test_cfg.model.attn_config = {
-            'attn_impl': attn_impl,
+            "attn_impl": attn_impl,
         }
     test_cfg.model.init_device = device
     test_cfg.device = device
@@ -93,21 +99,21 @@ def _get_objs(
     tokenizer_cfg: dict[str, Any] = _load_tokenizer_cfg(test_cfg.tokenizer)
     tokenizer = build_tokenizer(
         test_cfg.tokenizer.name,
-        tokenizer_cfg.get('kwargs', {}),
+        tokenizer_cfg.get("kwargs", {}),
     )
     tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    name = test_cfg.model.pop('name')
+    name = test_cfg.model.pop("name")
     model = build_composer_model(
         name=name,
         cfg=to_dict_container(test_cfg.model),
         tokenizer=tokenizer,
     )
-    model.model.lm_backbone = model.model.lm_backbone.to('cuda')
-    model.model.value_head = model.model.value_head.to('cuda')
+    model.model.lm_backbone = model.model.lm_backbone.to("cuda")
+    model.model.value_head = model.model.value_head.to("cuda")
 
     # Optimizer
-    assert test_cfg.optimizer.name == 'decoupled_adamw'
+    assert test_cfg.optimizer.name == "decoupled_adamw"
     optimizer = DecoupledAdamW(
         model.parameters(),
         lr=test_cfg.optimizer.lr,
@@ -126,44 +132,48 @@ def gen_random_batch(
     # inputs can be [], ['input_ids'], ['input_ids', 'inputs_embeds'], and ['inputs_embeds']
     # default to only input ids
     if inputs == None:
-        inputs = ['input_ids']
-    device = 'cuda'
+        inputs = ["input_ids"]
+    device = "cuda"
     # generate input batch of random data, suitable for a Causal LM
     batch = {}
-    batch['input_ids'] = torch.randint(
+    batch["input_ids"] = torch.randint(
         low=0,
-        #high=test_cfg.model.vocab_size,
+        # high=test_cfg.model.vocab_size,
         high=30000,
         size=(batch_size, test_cfg.max_seq_len * 2),
     ).to(device)
-    batch['text_attention_mask'] = torch.ones(
+    batch["text_attention_mask"] = torch.ones(
         size=(batch_size, test_cfg.max_seq_len * 2),
         dtype=torch.int64,
     ).to(device)
-    batch['chosen_len'] = (
+    batch["chosen_len"] = (
         torch.ones(
             size=(batch_size,),
             dtype=torch.int64,
-        ) * test_cfg.max_seq_len
+        )
+        * test_cfg.max_seq_len
     ).to(device)
-    batch['rejected_len'] = (
+    batch["rejected_len"] = (
         torch.ones(
             size=(batch_size,),
             dtype=torch.int64,
-        ) * test_cfg.max_seq_len
+        )
+        * test_cfg.max_seq_len
     ).to(device)
     return batch
 
 
 def test_forward_backward_hf_automodel():
-    model_id = 'jdchang/llama3-small'
-    sample_text = ['Welcome to compose RL!']
+    model_id = "jdchang/llama3-small"
+    sample_text = ["Welcome to compose RL!"]
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForCausalLMWithRM.from_pretrained(model_id)
     model.train()
     original_params = next(model.parameters()).clone().data
-    optimizer = DecoupledAdamW(model.parameters(),)
-    model_inputs = tokenizer(sample_text, return_tensors='pt')
+    optimizer = DecoupledAdamW(
+        model.parameters(),
+    )
+    model_inputs = tokenizer(sample_text, return_tensors="pt")
     output = model(**model_inputs)
     loss = output.scores.mean()
     loss.backward()
@@ -175,9 +185,9 @@ def test_forward_backward_hf_automodel():
 @pytest.mark.gpu
 @pytest.mark.world_size(2)
 @pytest.mark.parametrize(
-    'conf_path',
+    "conf_path",
     [
-        'tests/yamls/testing_hf.yaml',
+        "tests/yamls/testing_hf.yaml",
     ],
 )
 def test_forward_backward(
@@ -192,14 +202,16 @@ def test_forward_backward(
     )
     batch = gen_random_batch(batch_size, test_cfg)
 
-    assert batch['input_ids'].shape == torch.Size([
-        batch_size,
-        test_cfg.max_seq_len * 2,
-    ])
+    assert batch["input_ids"].shape == torch.Size(
+        [
+            batch_size,
+            test_cfg.max_seq_len * 2,
+        ]
+    )
     model.train()
     original_params = next(model.parameters()).clone().data
     outputs = model(batch)
-    loss = model.loss(outputs, batch)['total']  # type: ignore
+    loss = model.loss(outputs, batch)["total"]  # type: ignore
     loss.backward()
     optimizer.step()
     updated_params = next(model.parameters()).clone().data
@@ -208,13 +220,13 @@ def test_forward_backward(
 
 @pytest.mark.gpu
 @world_size(2)
-@pytest.mark.parametrize('fsdp_config', [None, {}])
+@pytest.mark.parametrize("fsdp_config", [None, {}])
 def test_hf_train(
     world_size: int,
     fsdp_config: dict[str, Any],
 ):
-    model_name = 'jdchang/llama3-small'
-    tokenizer = AutoTokenizer.from_pretrained(model_name, pad_token='[PAD]')
+    model_name = "jdchang/llama3-small"
+    tokenizer = AutoTokenizer.from_pretrained(model_name, pad_token="[PAD]")
     max_seq_len = 10
     dataset = PairwisePreference(size=32, max_seq_len=max_seq_len)
     dataloader = DataLoader(
@@ -228,27 +240,27 @@ def test_hf_train(
         batch_size=2,
     )
     model_config = {
-        'pretrained_model_name_or_path': model_name,
-        'pretrained': True,
-        'init_device': 'mixed',
-        'use_flash_attention_2': True,
-        'tokenizer': tokenizer,
-        'return_last': True,
-        'return_lm_logits': False,
+        "pretrained_model_name_or_path": model_name,
+        "pretrained": True,
+        "init_device": "mixed",
+        "use_flash_attention_2": True,
+        "tokenizer": tokenizer,
+        "return_last": True,
+        "return_lm_logits": False,
     }
 
     fsdp_config = {
-        'sharding_strategy': 'FULL_SHARD',
-        'cpu_offload': False,
-        'mixed_precision': 'PURE',
-        'activation_checkpointing': True,
-        'activation_cpu_offload': False,
-        'verbose': True,
-        'sync_module_states': True,
+        "sharding_strategy": "FULL_SHARD",
+        "cpu_offload": False,
+        "mixed_precision": "PURE",
+        "activation_checkpointing": True,
+        "activation_cpu_offload": False,
+        "verbose": True,
+        "sync_module_states": True,
     }
     init_context = process_init_device(model_config, fsdp_config)
     model = build_composer_model(
-        name='hf_pairwise_rm',
+        name="hf_pairwise_rm",
         tokenizer=tokenizer,
         init_context=init_context,
         cfg=model_config,
@@ -261,8 +273,8 @@ def test_hf_train(
         model=model,
         optimizers=optimizer,
         train_dataloader=dataloader,
-        parallelism_config={'fsdp': fsdp_config},
-        max_duration='1ep',
+        parallelism_config={"fsdp": fsdp_config},
+        max_duration="1ep",
     )
     print(trainer.state.model)
     with FSDP.summon_full_params(
@@ -286,7 +298,7 @@ def test_hf_train(
 @pytest.mark.gpu
 @world_size(2)
 def test_flashattention2(world_size: int):
-    model_name = 'jdchang/llama3-small'
+    model_name = "jdchang/llama3-small"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token_id = 0
     max_seq_len = 5
@@ -302,54 +314,53 @@ def test_flashattention2(world_size: int):
         batch_size=2,
     )
     model_config_flash = {
-        'pretrained_model_name_or_path': model_name,
-        'pretrained': True,
-        'init_device': 'cpu',
-        'use_flash_attention_2': True,
-        'tokenizer': tokenizer,
-        'return_last': True,
-        'return_lm_logits': False,
+        "pretrained_model_name_or_path": model_name,
+        "pretrained": True,
+        "init_device": "cpu",
+        "use_flash_attention_2": True,
+        "tokenizer": tokenizer,
+        "return_last": True,
+        "return_lm_logits": False,
     }
     model_config = {
-        'pretrained_model_name_or_path': model_name,
-        'pretrained': True,
-        'init_device': 'cpu',
-        'use_flash_attention_2': False,
-        'tokenizer': tokenizer,
-        'return_last': True,
-        'return_lm_logits': False,
+        "pretrained_model_name_or_path": model_name,
+        "pretrained": True,
+        "init_device": "cpu",
+        "use_flash_attention_2": False,
+        "tokenizer": tokenizer,
+        "return_last": True,
+        "return_lm_logits": False,
     }
 
     init_context = process_init_device(model_config, {})
     model = build_composer_model(
-        name='hf_pairwise_rm',
+        name="hf_pairwise_rm",
         tokenizer=tokenizer,
         init_context=init_context,
         cfg=model_config,
     )
     model_flash = build_composer_model(
-        name='hf_pairwise_rm',
+        name="hf_pairwise_rm",
         tokenizer=tokenizer,
         init_context=init_context,
         cfg=model_config_flash,
-    ).to('cuda')
+    ).to("cuda")
 
     transformer_block = model_flash.model.lm_backbone.model.layers[0]
     # Checks that Flash Attention has been properly initialized
     assert isinstance(transformer_block.self_attn, LlamaFlashAttention2)
 
-    with get_precision_context('amp_bf16'):
+    with get_precision_context("amp_bf16"):
         for batch in dataloader:
             out = model.forward(batch)
-            batch = {k: v.to('cuda') for k, v in batch.items()}
+            batch = {k: v.to("cuda") for k, v in batch.items()}
             out_flash = model_flash.forward(batch)
-            out_flash = {k: v.to('cpu') for k, v in out_flash.items()}
+            out_flash = {k: v.to("cpu") for k, v in out_flash.items()}
 
             assert torch.all(
-                out['chosen_scores'].bfloat16() !=
-                out['rejected_scores'].bfloat16(),
+                out["chosen_scores"].bfloat16() != out["rejected_scores"].bfloat16(),
             )
             assert torch.all(
-                out_flash['chosen_scores'].bfloat16() !=
-                out_flash['rejected_scores'].bfloat16(),
+                out_flash["chosen_scores"].bfloat16()
+                != out_flash["rejected_scores"].bfloat16(),
             )
