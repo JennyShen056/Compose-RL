@@ -1,47 +1,92 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
+"""Build a prompt dataset and dataloader for training."""
+
+import logging
+from typing import Any
+
+import numpy as np
 import torch
-from transformers import PreTrainedTokenizer
-from typing import Any, List
+from streaming import StreamingDataset
+from transformers import DataCollatorForLanguageModeling, PreTrainedTokenizer
+
+log = logging.getLogger(__name__)
 
 
 def prompt_dataset_collate_fn(
     tokenizer: PreTrainedTokenizer,
     max_seq_len: int,
-    data: List[dict[str, torch.Tensor]],
-) -> dict[str, Any]:
+    batch: list[dict[str, Any]],
+) -> dict[str, torch.Tensor]:
     """Collator for prompt data.
 
     Args:
-        tokenizer (PreTrainedTokenizer): Tokenizer for encoding text.
-        max_seq_len (int): Maximum token sequence length.
-        data (List[dict[str, torch.Tensor]]): List of prompt samples.
-
-    Returns:
-        dict: Collated batch for model input.
+        batch (List[Dict[str, Any]]): A list of data samples to collate.
+        tokenizer (PreTrainedTokenizer): The model's tokenizer.
+        max_seq_len (int): The maximum sequence length of the model.
     """
     if tokenizer.pad_token_id is None:
         raise ValueError("Tokenizer must have a PAD token.")
 
-    input_ids, attention_masks = [], []
+    ref_collate_fn = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+        mlm_probability=0.0,
+    )
 
-    for sample in data:
-        text = sample["prompt"]
+    keys = batch[0].keys()
+    collated_batch: dict[str, torch.Tensor] = {}
+    for key in keys:
+        cur_values = [item[key] for item in batch]
+        if key in ["prompt_len"]:
+            collated_batch[key] = torch.stack(cur_values).squeeze(dim=1)
+            continue
 
-        # Truncate & pad
-        if len(text) > max_seq_len:
-            text = text[:max_seq_len]
-        text = torch.cat(
-            [text, torch.full((max_seq_len - len(text),), tokenizer.pad_token_id)]
+        collated_batch[key] = ref_collate_fn(cur_values)["input_ids"]
+
+    collated_batch["prompt_attention_mask"] = torch.logical_not(
+        torch.eq(collated_batch["prompt"], tokenizer.pad_token_id),
+    )
+
+    return collated_batch
+
+
+class PromptStreamingDataset(StreamingDataset):
+    """Dataloader for streaming in prompts."""
+
+    def __init__(
+        self,
+        max_gen_len: int,
+        max_seq_len: int,
+        **kwargs: dict[str, Any],
+    ):
+        self.max_gen_len = max_gen_len
+        self.max_seq_len = max_seq_len
+        super().__init__(**kwargs)
+
+    def _read_binary_tokenized_sample(self, sample: dict[str, Any], key: str):
+        decoded_arr = torch.from_numpy(
+            np.frombuffer(sample[key], dtype=np.int64)[: self.max_seq_len].copy(),
         )
+        return decoded_arr
 
-        attention_mask = (text != tokenizer.pad_token_id).long()
+    # How to process a sample
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        """Get an item from StreamingDataset at a given index.
 
-        input_ids.append(text)
-        attention_masks.append(attention_mask)
+        Args:
+            idx (int): the index where we fetch the data in the StreamingDataset.
+        """
+        sample = super().__getitem__(idx)
+        prompt = self._read_binary_tokenized_sample(sample, "prompt")
 
-    return {
-        "input_ids": torch.stack(input_ids),
-        "text_attention_mask": torch.stack(attention_masks),
-    }
+        # TODO (bcui): Maybe add in an option to truncate a prompt by a given length?
+        if len(prompt) + self.max_gen_len > self.max_seq_len:
+            truncate_len = len(prompt) + self.max_gen_len - self.max_seq_len
+            log.info(f"Truncating prompt by: {truncate_len}")
+            prompt = prompt[:-truncate_len]
+
+        prompt_len = torch.Tensor([len(prompt)]).to(dtype=torch.int64)
+
+        return {"prompt": prompt, "prompt_len": prompt_len}
