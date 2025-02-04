@@ -20,11 +20,16 @@ from compose_rl.data.prompt_data import (
     PromptStreamingDataset,
     prompt_dataset_collate_fn,
 )
+from compose_rl.data.regression_data import (  # NEW: Import regression dataset
+    RegressionStreamingDataset,
+    regression_dataset_collate_fn,
+)
 
 __all__ = [
-    'build_finegrained_preference_dataloader',
-    'build_pairwise_preference_dataloader',
-    'build_prompt_dataloader',
+    "build_finegrained_preference_dataloader",
+    "build_pairwise_preference_dataloader",
+    "build_prompt_dataloader",
+    "build_regression_dataloader",  # NEW
 ]
 
 
@@ -34,7 +39,7 @@ def generate_dataloader_builder(
 ) -> Callable:
     """Generates dataloader builder for a given dataset_cls and collate_fn."""
 
-    def build_preference_dataloader(
+    def build_dataloader(
         tokenizer: PreTrainedTokenizer,
         device_batch_size: int,
         dataset: dict[str, Any],
@@ -45,7 +50,7 @@ def generate_dataloader_builder(
         persistent_workers: bool = True,
         timeout: int = 0,
     ) -> DataLoader:
-        """Builds a dataloader for prompt data.
+        """Builds a dataloader for various data types.
 
         Args:
             tokenizer: the model's tokenizer.
@@ -59,12 +64,11 @@ def generate_dataloader_builder(
             timeout: the timeout value.
         """
         dataset_cfg = dataset
-
-        streams_dict = dataset_cfg.pop('streams', None)
-        max_seq_len = dataset_cfg.get('max_seq_len', None)
+        streams_dict = dataset_cfg.pop("streams", None)
+        max_seq_len = dataset_cfg.get("max_seq_len", None)
         if max_seq_len is None:
             raise ValueError(
-                'max_seq_len must be provided in the dataset configuration',
+                "max_seq_len must be provided in the dataset configuration",
             )
 
         # Build streams
@@ -94,9 +98,10 @@ def generate_dataloader_builder(
         )
         return dataloader
 
-    return build_preference_dataloader
+    return build_dataloader
 
 
+# Build dataloaders
 build_pairwise_preference_dataloader = generate_dataloader_builder(
     PairwisePreferenceStreamingDataset,
     pairwise_preference_dataset_collate_fn,
@@ -110,4 +115,9 @@ build_finegrained_preference_dataloader = generate_dataloader_builder(
 build_prompt_dataloader = generate_dataloader_builder(
     PromptStreamingDataset,
     prompt_dataset_collate_fn,
+)
+
+build_regression_dataloader = generate_dataloader_builder(  # NEW
+    RegressionStreamingDataset,
+    regression_dataset_collate_fn,
 )

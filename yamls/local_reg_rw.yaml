@@ -89,7 +89,7 @@ progress_bar: false
 #   num_workers: 8
 
 train_loader:
-  name: pairwise_preference
+  name: regression_preference
   dataset:
     # remote: # TODO: Add remote path here if applicable
     # local: # TODO: Add the local path of the training ataloader
