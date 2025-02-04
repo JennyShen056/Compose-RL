@@ -45,7 +45,7 @@ hf_ppo_lm = "compose_rl.ppo:ComposerHFPolicyModel"
 [project.entry-points."llmfoundry_dataloaders"]
 pairwise_preference = "compose_rl.data:build_pairwise_preference_dataloader"
 finegrained_preference = "compose_rl.data:build_finegrained_preference_dataloader"
-regression_preference = "compose_rl.data:build_pairwise_preference_dataloader"
+regression_preference = "compose_rl.data:build_regression_dataloader"
 prompt = "compose_rl.data:build_prompt_dataloader"
 
 [project.entry-points."llmfoundry_callbacks_with_config"]
