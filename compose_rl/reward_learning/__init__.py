@@ -20,21 +20,23 @@ from compose_rl.reward_learning.inference_model import InferenceRewardModel
 from compose_rl.reward_learning.model import (
     ComposerHFPairwiseRewardModel,
     ComposerMPTPairwiseRewardModel,
+    ComposerHFClassifierRewardModel，
 )
 
 # Necessary to upload code when saving
 RewardModelConfig.register_for_auto_class()
-AutoModelForCausalLMWithRM.register_for_auto_class('AutoModel')
+AutoModelForCausalLMWithRM.register_for_auto_class("AutoModel")
 
 __all__ = [
-    'BaseReward',
-    'Reward',
-    'RewardModel',
-    'ComposerMPTPairwiseRewardModel',
-    'ComposerHFPairwiseRewardModel',
-    'InferenceRewardModel',
-    'BadGenerationEndReward',
-    'IncreasingNumbersReward',
-    'OutputLengthReward',
-    'ShortResponseReward',
+    "BaseReward",
+    "Reward",
+    "RewardModel",
+    "ComposerMPTPairwiseRewardModel",
+    "ComposerHFPairwiseRewardModel",
+    'ComposerHFClassifierRewardModel', 
+    "InferenceRewardModel",
+    "BadGenerationEndReward",
+    "IncreasingNumbersReward",
+    "OutputLengthReward",
+    "ShortResponseReward",
 ]
