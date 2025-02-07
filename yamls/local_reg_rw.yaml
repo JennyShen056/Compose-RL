@@ -1,4 +1,4 @@
-run_name: local-llama-8b-reg-reward
+run_name: local-llama-8b-reward
 seed: 17
 # loggers:
 # TODO: define loggers, e.g. mlflow, wandb, etc.
@@ -9,7 +9,8 @@ seed: 17
 #     run: "{run_name}"
 
 model:
-  name: hf_regression_rm
+  name: hf_classifier_rm # for finegrained rewards
+  # name: hf_pairwise_rm
   pretrained_model_name_or_path: meta-llama/Meta-Llama-3.1-8B-Instruct
   pretrained: true
   loss_type: bce
@@ -18,10 +19,15 @@ model:
   return_lm_logits: false
   use_auth_token: true
   init_device: mixed
+  # additional_train_metrics:
+  #   - pairwise_rm_accuracy
+  # additional_eval_metrics:
+  #   - pairwise_rm_accuracy
+  # For regression based rewards
   additional_train_metrics:
-    - regression_rm_mse
+    - classifier_accuracy
   additional_eval_metrics:
-    - regression_rm_mse
+    - classifier_accuracy
 
 callbacks:
   lr_monitor: {}
@@ -89,7 +95,8 @@ progress_bar: false
 #   num_workers: 8
 
 train_loader:
-  name: regression_preference
+  name: finegrained_preference # For finegrained rewards
+  # name: pairwise_preference
   dataset:
     # remote: # TODO: Add remote path here if applicable
     # local: # TODO: Add the local path of the training ataloader

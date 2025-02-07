@@ -43,31 +43,70 @@ class PairwiseRewardClassificationAccuracy(Metric):
         return self.correct / self.total
 
 
-import torch
-from torchmetrics import Metric
+class ClassificationAccuracy(Metric):
+    """Classification accuracy metric.
 
-
-class RegressionRewardMSE(Metric):
-    """Mean Squared Error for Regression Reward Model.
-
-    This metric computes the MSE between the predicted reward scores and the actual labels.
+    Computes the accuracy of a classifier by comparing predictions from logits
+    against ground truth labels. Handles both binary and multi-class
+    classification.
     """
 
+    # Make torchmetrics call update only once
     full_state_update = False
 
-    def __init__(self, dist_sync_on_step: bool = False):
+    def __init__(
+        self,
+        binary: bool = True,
+        threshold: float = 0.5,
+        dist_sync_on_step: bool = False,
+        **kwargs: Any,
+    ):
+        """Initialize the metric.
+
+        Args:
+            binary: If True, treats as binary classification with sigmoid.
+                   If False, treats as multi-class with softmax.
+            threshold: Decision threshold for binary classification
+            dist_sync_on_step: Synchronize metric state across processes
+        """
         super().__init__(dist_sync_on_step=dist_sync_on_step)
+        self.binary = binary
+        self.threshold = threshold
+
         self.add_state(
-            "sum_squared_error", default=torch.tensor(0.0), dist_reduce_fx="sum"
+            "correct",
+            default=torch.tensor(0.0),
+            dist_reduce_fx="sum",
         )
         self.add_state("total", default=torch.tensor(0.0), dist_reduce_fx="sum")
 
     def update(self, batch: dict, output_logits: torch.Tensor):
-        predictions = batch["output_scores"].detach().cpu()
-        targets = batch["labels"].detach().cpu()
+        """Update state with predictions and targets.
 
-        self.sum_squared_error += torch.sum((predictions - targets) ** 2)
-        self.total += targets.numel()
+        Args:
+            batch: Dictionary containing 'output_scores' and 'labels'
+            output_logits: `None`
+        """
+        del output_logits
+        logits = batch["output_scores"]
+        # TODO: this might break something, need to double check
+        targets = batch["labels"].squeeze(-1)
+        assert logits.shape[0] == targets.shape[0], "Batch sizes must match"
+
+        if self.binary:
+            # Binary classification
+            probs = torch.sigmoid(logits.squeeze())
+            predictions = (probs > self.threshold).long()
+        else:
+            # Multi-class classification
+            probs = torch.softmax(logits, dim=1)
+            predictions = torch.argmax(probs, dim=1)
+
+        self.correct += (predictions == targets).sum().detach().cpu()
+        self.total += targets.shape[0]
 
     def compute(self):
-        return self.sum_squared_error / self.total
+        """Compute the accuracy."""
+        assert isinstance(self.correct, Tensor)
+        assert isinstance(self.total, Tensor)
+        return self.correct / self.total

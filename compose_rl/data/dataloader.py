@@ -20,16 +20,11 @@ from compose_rl.data.prompt_data import (
     PromptStreamingDataset,
     prompt_dataset_collate_fn,
 )
-from compose_rl.data.regression_data import (  # ✅ Import Regression Data
-    RegressionStreamingDataset,
-    regression_dataset_collate_fn,
-)
 
 __all__ = [
     "build_finegrained_preference_dataloader",
     "build_pairwise_preference_dataloader",
     "build_prompt_dataloader",
-    "build_regression_dataloader",  # ✅ Include Regression Dataloader
 ]
 
 
@@ -115,11 +110,4 @@ build_finegrained_preference_dataloader = generate_dataloader_builder(
 build_prompt_dataloader = generate_dataloader_builder(
     PromptStreamingDataset,
     prompt_dataset_collate_fn,
-)
-
-build_regression_dataloader = (
-    generate_dataloader_builder(  # ✅ Add Regression Dataloader
-        RegressionStreamingDataset,
-        regression_dataset_collate_fn,
-    )
 )

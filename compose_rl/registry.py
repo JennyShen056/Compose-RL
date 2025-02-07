@@ -13,7 +13,6 @@ from compose_rl.reward_learning import (
     BadGenerationEndReward,
     ComposerHFPairwiseRewardModel,
     ComposerMPTPairwiseRewardModel,
-    ComposerHFClassifierRewardModel,
     IncreasingNumbersReward,
     InferenceRewardModel,
     OutputLengthReward,
@@ -27,7 +26,6 @@ RL_REWARD_REGISTRY = {
     "inference_reward_model": InferenceRewardModel,
     "mpt_pairwise": ComposerMPTPairwiseRewardModel,
     "hf_pairwise": ComposerHFPairwiseRewardModel,
-    "hf_regression": ComposerHFPairwiseRewardModel,
     "bad_generation_end": BadGenerationEndReward,
 }
 

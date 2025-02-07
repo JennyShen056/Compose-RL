@@ -1,7 +1,7 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
-"""A unified script to create prompt datasets for different data types, including regression reward modeling."""
+"""A unified script to create prompt datasets for different data types."""
 
 import argparse
 import os
@@ -18,11 +18,11 @@ class UnifiedTokenizedDataset(IterableDataset):
     """An IterableDataset that returns token samples.
 
     Args:
-        dataset_name (str): The name of the HF dataset to process.
-        split (str): The split of the HF dataset to process.
-        tokenizer (PreTrainedTokenizerBase): The tokenizer used to process the dataset.
-        max_length (int): The maximum length of each sample.
-        dataset_type (str): Type of dataset ('preference', 'single_prompt', 'regression').
+        dataset_name (str): the name of the hf dataset to process
+        split (str): the split of the hf dataset to process
+        tokenizer (PreTrainedTokenizerBase): the tokenizer used to process the dataset
+        max_length (int): the maximum length of each sample
+        dataset_type (str): type of dataset ('preference' or 'single_prompt')
     """
 
     def __init__(
@@ -31,7 +31,7 @@ class UnifiedTokenizedDataset(IterableDataset):
         split: str,
         tokenizer: PreTrainedTokenizerBase,
         max_length: int,
-        dataset_type: Literal["preference", "single_prompt", "regression"],
+        dataset_type: Literal["preference", "single_prompt"],
     ):
         self.tokenizer = tokenizer
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -56,14 +56,14 @@ class UnifiedTokenizedDataset(IterableDataset):
                 result = self._process_single_prompt_sample(sample)
                 if result is not None:
                     yield result
-            elif self.dataset_type == "regression":
-                yield self._process_regression_sample(sample)
+            elif self.dataset_type == "classifier":
+                yield self._dummy_process_classifier_sample(sample)
 
     def _process_preference_sample(self, sample: Any):
         """Process a preference sample.
 
         Args:
-            sample (Any): A sample from the dataset.
+            sample (Any): a sample from the dataset
         """
         chosen_messages = sample["chosen"]
         rejected_messages = sample["rejected"]
@@ -83,10 +83,10 @@ class UnifiedTokenizedDataset(IterableDataset):
         }
 
     def _process_single_prompt_sample(self, sample: Any):
-        """Process a single prompt sample.
+        """Process a prompt sample.
 
         Args:
-            sample (Any): A sample from the dataset.
+            sample (Any): a sample from the dataset
         """
         prompt = sample["prompt"]
         messages = [
@@ -106,7 +106,7 @@ class UnifiedTokenizedDataset(IterableDataset):
 
         return {"prompt": np.asarray(encoded_prompt).tobytes()}
 
-    def _process_regression_sample(self, sample: Any):
+    def _dummy_process_classifier_sample(self, sample: Any):
         """Process a regression reward modeling sample.
 
         Args:
@@ -129,8 +129,32 @@ class UnifiedTokenizedDataset(IterableDataset):
 
         return {
             "text": np.asarray(encoded_text).tobytes(),
-            "labels": np.asarray([labels], dtype=np.float32).tobytes(),
+            "labels": np.asarray([labels]).tobytes(),
         }
+
+    # def _dummy_process_classifier_sample(self, sample: Any):
+    #     """A dummy process a classifier sample.
+
+    #     Args:
+    #         sample (Any): a sample from the dataset
+    #     """
+    #     messages = [
+    #         {
+    #             "role": "user",
+    #             "content": f"This is a test",
+    #         }
+    #     ]
+    #     encoded_prompt = self.tokenizer.apply_chat_template(
+    #         messages,
+    #         tokenize=True,
+    #     )
+
+    #     label = np.random.randint(0, 2, size=(1,))
+
+    #     return {
+    #         "input": np.asarray(encoded_prompt).tobytes(),
+    #         "label": np.asarray(label).tobytes(),
+    #     }
 
 
 def main(
@@ -140,7 +164,7 @@ def main(
     hashes: list[str],
     splits: list[str],
     tokenizer_name: str,
-    dataset_type: Literal["preference", "single_prompt", "regression"],
+    dataset_type: Literal["preference", "single_prompt"],
     max_length: int = 2048,
 ):
     columns = {
@@ -151,9 +175,9 @@ def main(
         "single_prompt": {
             "prompt": "bytes",
         },
-        "regression": {
-            "text": "bytes",
-            "labels": "bytes",
+        "classifier": {
+            "input": "bytes",
+            "label": "bytes",
         },
     }[dataset_type]
 
@@ -183,7 +207,9 @@ def main(
 
             print("Converting to MDS format")
 
-            for sample in dataset:
+            for i, sample in enumerate(dataset):
+                if i == 1000:
+                    break
                 num_written += 1
                 out.write(sample)
 
@@ -217,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset_type",
         type=str,
-        choices=["preference", "single_prompt", "regression"],
+        choices=["preference", "single_prompt", "classifier"],
         required=True,
         help="Type of dataset to process",
     )
