@@ -116,14 +116,14 @@ class UnifiedTokenizedDataset(IterableDataset):
         label = np.array(sample['labels'], dtype=np.float32)  
 
         # Tokenizing the text using the chat template
-        messages = [
-            {
-                "role": "user",
-                "content": text,
-            }
-        ]
+        # messages = [
+        #     {
+        #         "role": "user",
+        #         "content": text,
+        #     }
+        # ]
         encoded_text = self.tokenizer.apply_chat_template(
-            messages,
+            text,
             tokenize=True,
         )
 
