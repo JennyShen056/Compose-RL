@@ -176,7 +176,7 @@ def main(
             "prompt": "bytes",
         },
         "classifier": {
-            "input": "bytes",
+            "text": "bytes",
             "label": "bytes",
         },
     }[dataset_type]
