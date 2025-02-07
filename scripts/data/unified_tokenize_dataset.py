@@ -113,23 +113,16 @@ class UnifiedTokenizedDataset(IterableDataset):
             sample (Any): A sample from the dataset.
         """
         text = sample["text"]
-        labels = np.array(sample["labels"], dtype=np.int64)
-
-        # Tokenizing the text using the chat template
-        # messages = [
-        #     {
-        #         "role": "user",
-        #         "content": text,
-        #     }
-        # ]
-        encoded_text = self.tokenizer.apply_chat_template(
+        encoded_prompt = self.tokenizer.apply_chat_template(
             text,
             tokenize=True,
         )
 
+        labels = sample["labels"]  # Single label per sample
+
         return {
-            "text": np.asarray(encoded_text).tobytes(),
-            "label": np.asarray([labels]).tobytes(),
+            "text": np.asarray(encoded_prompt).tobytes(),
+            "labels": np.asarray([labels], dtype=np.int64).tobytes(),
         }
 
     # def _dummy_process_classifier_sample(self, sample: Any):

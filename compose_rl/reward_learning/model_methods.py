@@ -271,16 +271,12 @@ def classifier_loss(
         batch (Mapping): Input batch of data.
         loss_type (str): Loss type that we should compute (e.g. bce),
     """
-    output_scores = outputs["output_scores"]
-    labels = batch["labels"].view(-1)  # Flatten to 1D tensor
-
     if loss_type == ClassifierRewardEnum.BCE:
-        # Multi-class cross entropy
-        loss = F.cross_entropy(output_scores, labels)
-
-    return {
-        "total": loss,
-    }
+        loss = F.cross_entropy(
+            outputs["output_scores"].squeeze(0),  # Remove extra dimension
+            batch["labels"].squeeze(0),  # Remove extra dimension
+        )
+    return {"total": loss}
 
     # output_scores = outputs["output_scores"]
 
