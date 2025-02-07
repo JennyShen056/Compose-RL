@@ -1,7 +1,6 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
-######### model_methods.py #############
 """Reward Model Utilies."""
 
 from enum import Enum
@@ -178,7 +177,7 @@ def classifier_forward(
 ) -> dict[str, torch.Tensor]:
 
     model_output = model(
-        batch["text"],
+        batch["input_ids"],
         attention_mask=batch["text_attention_mask"],
         return_lm_logits=return_lm_logits,
     )
@@ -271,25 +270,18 @@ def classifier_loss(
         batch (Mapping): Input batch of data.
         loss_type (str): Loss type that we should compute (e.g. bce),
     """
+    output_scores = outputs["output_scores"]
+
     if loss_type == ClassifierRewardEnum.BCE:
-        loss = F.cross_entropy(
-            outputs["output_scores"].squeeze(0),  # Remove extra dimension
-            batch["labels"].squeeze(0),  # Remove extra dimension
+        loss = F.binary_cross_entropy_with_logits(
+            output_scores,
+            batch["labels"],
         )
-    return {"total": loss}
+    else:
+        raise NotImplementedError(f"Loss type: {loss_type} is not supported.")
 
-    # output_scores = outputs["output_scores"]
+    loss_dict = {
+        "total": loss,
+    }
 
-    # if loss_type == ClassifierRewardEnum.BCE:
-    #     loss = F.binary_cross_entropy_with_logits(
-    #         output_scores,
-    #         batch["labels"],
-    #     )
-    # else:
-    #     raise NotImplementedError(f"Loss type: {loss_type} is not supported.")
-
-    # loss_dict = {
-    #     "total": loss,
-    # }
-
-    # return loss_dict
+    return loss_dict

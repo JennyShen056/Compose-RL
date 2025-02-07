@@ -107,47 +107,25 @@ class UnifiedTokenizedDataset(IterableDataset):
         return {"prompt": np.asarray(encoded_prompt).tobytes()}
 
     def _dummy_process_classifier_sample(self, sample: Any):
-        """Process a regression reward modeling sample.
+        """A dummy process a classifier sample.
 
         Args:
-            sample (Any): A sample from the dataset.
+            sample (Any): a sample from the dataset
         """
+
         text = sample["text"]
-        encoded_prompt = self.tokenizer.apply_chat_template(
+        encoded_text = self.tokenizer.apply_chat_template(
             text,
             tokenize=True,
         )
 
-        labels = sample["labels"]  # Single label per sample
+        # Convert label to int64 numpy array and ensure it's a single value
+        label = np.array([sample["labels"]], dtype=np.int64)
 
         return {
-            "text": np.asarray(encoded_prompt).tobytes(),
-            "labels": np.asarray([labels], dtype=np.int64).tobytes(),
+            "input": np.asarray(encoded_text).tobytes(),
+            "label": label.tobytes(),
         }
-
-    # def _dummy_process_classifier_sample(self, sample: Any):
-    #     """A dummy process a classifier sample.
-
-    #     Args:
-    #         sample (Any): a sample from the dataset
-    #     """
-    #     messages = [
-    #         {
-    #             "role": "user",
-    #             "content": f"This is a test",
-    #         }
-    #     ]
-    #     encoded_prompt = self.tokenizer.apply_chat_template(
-    #         messages,
-    #         tokenize=True,
-    #     )
-
-    #     label = np.random.randint(0, 2, size=(1,))
-
-    #     return {
-    #         "input": np.asarray(encoded_prompt).tobytes(),
-    #         "label": np.asarray(label).tobytes(),
-    #     }
 
 
 def main(
@@ -157,7 +135,7 @@ def main(
     hashes: list[str],
     splits: list[str],
     tokenizer_name: str,
-    dataset_type: Literal["preference", "single_prompt"],
+    dataset_type: Literal["preference", "single_prompt", "classifier"],
     max_length: int = 2048,
 ):
     columns = {
@@ -169,8 +147,8 @@ def main(
             "prompt": "bytes",
         },
         "classifier": {
-            "text": "bytes",
-            "labels": "bytes",
+            "input": "bytes",
+            "label": "bytes",
         },
     }[dataset_type]
 

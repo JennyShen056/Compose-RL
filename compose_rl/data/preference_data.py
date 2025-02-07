@@ -1,7 +1,6 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
-############## preference_data.py #################
 """Build a reward dataset and dataloader for training."""
 
 import logging
@@ -160,35 +159,27 @@ def finegrained_preference_dataset_collate_fn(
         mlm_probability=0.0,
     )
 
-    keys = data[0].keys()
-    batch = {}
-    for key in keys:
-        cur_values = [item[key] for item in data]
-        if key == "prompt_mask":
-            max_len = max([len(val) for val in cur_values])
-            mask = torch.stack(
-                [
-                    torch.cat([torch.Tensor(val), torch.ones(max_len - len(val))])
-                    for val in cur_values
-                ]
-            )
-            mask = ~mask.to(torch.bool)
-            batch[key] = mask.to(torch.int8)
-            continue
-        elif key in ["prompt_len", "text_len"]:
-            batch[key] = torch.stack(cur_values).squeeze(dim=1)
-            continue
-        elif key in ["label"]:
-            cur_values = [a.unsqueeze(0) for a in cur_values]
-            batch[key] = torch.cat(cur_values, dim=0)
-            continue
+    input_ids = []
+    attention_masks = []
+    text_lens = []
+    labels = []
 
-        batch[key] = ref_collate_fn(cur_values)["input_ids"]
-    batch["text_attention_mask"] = torch.logical_not(
-        torch.eq(batch["text"], tokenizer.pad_token_id),
-    )
+    for sample in data:
+        input_ids.append(sample["input"])
+        text_lens.append(sample["text_len"])
+        labels.append(sample["label"])
 
-    return batch
+    input_ids = ref_collate_fn(input_ids)["input_ids"]
+    attention_masks = torch.logical_not(torch.eq(input_ids, tokenizer.pad_token_id))
+    text_lens = torch.stack(text_lens).squeeze(dim=1)
+    labels = torch.stack(labels).squeeze(dim=1)
+
+    return {
+        "input_ids": input_ids,
+        "text_attention_mask": attention_masks,
+        "text_len": text_lens,
+        "labels": labels,
+    }
 
 
 class PairwisePreferenceStreamingDataset(StreamingDataset):
@@ -302,8 +293,8 @@ class FinegrainedPreferenceStreamingDataset(StreamingDataset):
             idx (int): the index where we fetch the data in the StreamingDataset.
         """
         sample = super().__getitem__(idx)
-        text = self._read_binary_tokenized_sample(sample, "text")
-        label = torch.from_numpy(np.frombuffer(sample["labels"], dtype=np.uint8))
+        text = self._read_binary_tokenized_sample(sample, "input")
+        label = torch.from_numpy(np.frombuffer(sample["label"], dtype=np.uint8))
         # This needs to be a float tensor for BCE
         label = label.to(torch.float32)
 

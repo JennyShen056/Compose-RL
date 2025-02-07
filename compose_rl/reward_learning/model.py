@@ -1,8 +1,6 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
-######### model.py #############
-
 """Reward Model Composer Implementation."""
 
 import logging
@@ -47,7 +45,9 @@ class ComposerHFPairwiseRewardModel(
         self.return_lm_logits = return_lm_logits
         self.return_last = return_last
 
-        config_overrides = {"return_logits": return_lm_logits, "num_labels": 5}
+        config_overrides = {
+            "return_logits": return_lm_logits,
+        }
 
         super().__init__(
             tokenizer=tokenizer,
