@@ -47,13 +47,8 @@ class ComposerHFPairwiseRewardModel(
         self.return_lm_logits = return_lm_logits
         self.return_last = return_last
 
-        config_overrides = {
-            "return_logits": return_lm_logits,
-        }
-        config_overrides = {
-            "return_logits": return_lm_logits,
-            "num_labels": 5,  # 0-4 classes
-        }
+        config_overrides = {"return_logits": return_lm_logits, "num_labels": 5}
+
         super().__init__(
             tokenizer=tokenizer,
             use_train_metrics=use_train_metrics,

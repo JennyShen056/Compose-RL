@@ -113,8 +113,8 @@ class UnifiedTokenizedDataset(IterableDataset):
             sample (Any): A sample from the dataset.
         """
         text = sample["text"]
-        labels = np.array(sample["labels"], dtype=np.float32)
-
+        labels = np.zeros(5, dtype=np.float32)
+        labels[sample["labels"]] = 1.0
         # Tokenizing the text using the chat template
         # messages = [
         #     {

@@ -274,15 +274,12 @@ def classifier_loss(
     output_scores = outputs["output_scores"]
 
     if loss_type == ClassifierRewardEnum.BCE:
-        loss = F.binary_cross_entropy_with_logits(
-            output_scores,
-            batch["labels"],
-        )
-    else:
-        raise NotImplementedError(f"Loss type: {loss_type} is not supported.")
+        loss = F.cross_entropy(output_scores, batch["labels"].argmax(dim=1))
 
     loss_dict = {
         "total": loss,
+        "accuracy": (output_scores.argmax(dim=1) == batch["labels"].argmax(dim=1))
+        .float()
+        .mean(),
     }
-
     return loss_dict
