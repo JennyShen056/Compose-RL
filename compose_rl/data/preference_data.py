@@ -140,89 +140,56 @@ def pairwise_preference_dataset_collate_fn(
     return return_dict
 
 
-# def finegrained_preference_dataset_collate_fn(
-#     tokenizer: PreTrainedTokenizer,
-#     max_seq_len: int,
-#     data: dict,
-# ) -> dict[str, Any]:
-#     """Collator for fine-grained preference data.
-
-#     Args:
-#         tokenizer (Tokenizer): The model's tokenizer.
-#         max_seq_len (int): The maximum sequence length of the model.
-#         data (dict): The preference data to collate.
-#     """
-#     del max_seq_len
-#     if tokenizer.pad_token_id is None:
-#         raise ValueError("Tokenizer must have a PAD token.")
-#     ref_collate_fn = DataCollatorForLanguageModeling(
-#         tokenizer=tokenizer,
-#         mlm=False,
-#         mlm_probability=0.0,
-#     )
-
-#     keys = data[0].keys()
-#     batch = {}
-#     for key in keys:
-#         cur_values = [item[key] for item in data]
-#         if key == "prompt_mask":
-#             max_len = max([len(val) for val in cur_values])
-#             mask = torch.stack(
-#                 [
-#                     torch.cat([torch.Tensor(val), torch.ones(max_len - len(val))])
-#                     for val in cur_values
-#                 ]
-#             )
-#             mask = ~mask.to(torch.bool)
-#             batch[key] = mask.to(torch.int8)
-#             continue
-#         elif key in ["prompt_len", "text_len"]:
-#             batch[key] = torch.stack(cur_values).squeeze(dim=1)
-#             continue
-#         elif key in ["label"]:
-#             cur_values = [a.unsqueeze(0) for a in cur_values]
-#             batch[key] = torch.cat(cur_values, dim=0)
-#             continue
-
-#         batch[key] = ref_collate_fn(cur_values)["input_ids"]
-#     batch["text_attention_mask"] = torch.logical_not(
-#         torch.eq(batch["text"], tokenizer.pad_token_id),
-#     )
-
-#     return batch
-
-
 def finegrained_preference_dataset_collate_fn(
-    data: list[dict[str, Any]]
-) -> dict[str, torch.Tensor]:
-    """
-    Collate function for fine-grained preference dataset.
+    tokenizer: PreTrainedTokenizer,
+    max_seq_len: int,
+    data: dict,
+) -> dict[str, Any]:
+    """Collator for fine-grained preference data.
 
     Args:
-        data (list[dict[str, Any]]): A list of samples, each containing "text" and "labels".
-
-    Returns:
-        dict[str, torch.Tensor]: A batch with tokenized text, attention mask, and labels.
+        tokenizer (Tokenizer): The model's tokenizer.
+        max_seq_len (int): The maximum sequence length of the model.
+        data (dict): The preference data to collate.
     """
-    texts = []
-    labels = []
+    del max_seq_len
+    if tokenizer.pad_token_id is None:
+        raise ValueError("Tokenizer must have a PAD token.")
+    ref_collate_fn = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,
+        mlm_probability=0.0,
+    )
 
-    for sample in data:
-        # Ensure "text" is in the correct format (binary to tensor conversion)
-        input_ids = torch.tensor(np.frombuffer(sample["text"], dtype=np.int64))
-        texts.append(input_ids)
-        labels.append(sample["labels"])
+    keys = data[0].keys()
+    batch = {}
+    for key in keys:
+        cur_values = [item[key] for item in data]
+        if key == "prompt_mask":
+            max_len = max([len(val) for val in cur_values])
+            mask = torch.stack(
+                [
+                    torch.cat([torch.Tensor(val), torch.ones(max_len - len(val))])
+                    for val in cur_values
+                ]
+            )
+            mask = ~mask.to(torch.bool)
+            batch[key] = mask.to(torch.int8)
+            continue
+        elif key in ["prompt_len", "text_len"]:
+            batch[key] = torch.stack(cur_values).squeeze(dim=1)
+            continue
+        elif key in ["labels"]:
+            cur_values = [a.unsqueeze(0) for a in cur_values]
+            batch[key] = torch.cat(cur_values, dim=0)
+            continue
 
-    # Stack texts to form a batch (batch_size, seq_length)
-    texts = torch.stack(texts)
-    text_attention_mask = (texts != 0).to(torch.int64)  # Ensure 0-padding mask
-    labels = torch.tensor(labels, dtype=torch.int64)
+        batch[key] = ref_collate_fn(cur_values)["input_ids"]
+    batch["text_attention_mask"] = torch.logical_not(
+        torch.eq(batch["text"], tokenizer.pad_token_id),
+    )
 
-    return {
-        "text": texts,  # Must match expected key
-        "text_attention_mask": text_attention_mask,
-        "labels": labels,
-    }
+    return batch
 
 
 class PairwisePreferenceStreamingDataset(StreamingDataset):
