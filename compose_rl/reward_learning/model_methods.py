@@ -273,7 +273,7 @@ def classifier_loss(
     output_scores = outputs["output_scores"]
 
     if loss_type == ClassifierRewardEnum.BCE:
-        loss = F.binary_cross_entropy_with_logits(
+        loss = F.cross_entropy(
             output_scores,
             batch["labels"],
         )
