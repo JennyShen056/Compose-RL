@@ -18,12 +18,15 @@ def main():
     # ✅ Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    # ✅ Initialize the model using Composer's custom class (NOT Hugging Face model)
-    model = ComposerHFClassifierRewardModel(tokenizer=tokenizer)
+    # ✅ Initialize the model using Composer's custom class
+    model = ComposerHFClassifierRewardModel(
+        pretrained_model_name_or_path=tokenizer_name,  # ✅ Added required argument
+        tokenizer=tokenizer,
+    )
     model.to(device)
     model.eval()
 
-    # ✅ Restore checkpoint using Composer's Trainer (which supports `.distcp` files)
+    # ✅ Restore checkpoint using Composer's Trainer
     trainer = Trainer(model=model)
     trainer.load_checkpoint(model_checkpoint)
 
