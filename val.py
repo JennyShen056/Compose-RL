@@ -14,12 +14,18 @@ def main():
     # ✅ Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Free up memory
+    torch.cuda.empty_cache()
+
     # ✅ Initialize the model architecture
     model = AutoModelForSequenceClassification.from_pretrained(
         tokenizer_name, num_labels=5
-    )
+    ).half()
     model.to(device)
     model.eval()
+    model = torch.compile(model)
 
     # ✅ Restore checkpoint correctly using Composer's Trainer
     trainer = Trainer(model=model)
