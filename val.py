@@ -1,33 +1,31 @@
+import os
 import torch
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer
+from composer.trainer import Trainer
+from compose_rl.reward_learning.model import (
+    ComposerHFClassifierRewardModel,
+)  # ✅ Correct Model Import
 
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # ✅ Define paths
-    model_checkpoint = (
-        "/tmp/reward_model/ep1-ba125/"  # Path to the Composer checkpoint folder
-    )
-    tokenizer_name = "meta-llama/Llama-3.1-8B-Instruct"
+    # ✅ Path to Composer checkpoint directory
+    model_checkpoint = "/tmp/reward_model/ep1-ba125/"
+    tokenizer_name = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 
     # ✅ Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    # ✅ Initialize model architecture (Ensure num_labels matches trained classes)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        tokenizer_name, num_labels=5
-    )
+    # ✅ Initialize the model using Composer's custom class (NOT Hugging Face model)
+    model = ComposerHFClassifierRewardModel(tokenizer=tokenizer)
     model.to(device)
     model.eval()
 
-    # ✅ Manually load Composer checkpoint
-    checkpoint_path = "/tmp/reward_model/ep1-ba125/__0_0.distcp"  # Adjust if needed
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-
-    # ✅ Load model weights from the checkpoint
-    model.load_state_dict(checkpoint["state"]["model"], strict=False)
+    # ✅ Restore checkpoint using Composer's Trainer (which supports `.distcp` files)
+    trainer = Trainer(model=model)
+    trainer.load_checkpoint(model_checkpoint)
 
     # ✅ Load validation dataset (First 100 samples)
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
@@ -50,10 +48,18 @@ def main():
         )
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
+        # ✅ Prepare batch for Composer model
+        text_len = inputs["attention_mask"].sum(dim=1)
+        batch = {
+            "text": inputs["input_ids"],
+            "text_attention_mask": inputs["attention_mask"],
+            "text_len": text_len,
+        }
+
         # ✅ Make prediction
         with torch.no_grad():
-            outputs = model(**inputs)
-            predicted_label = torch.argmax(outputs.logits, dim=1).item()
+            outputs = model.forward(batch)
+            predicted_label = torch.argmax(outputs["output_scores"], dim=1).item()
 
         # ✅ Calculate Accuracy
         if predicted_label == true_label:
