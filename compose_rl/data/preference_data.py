@@ -179,18 +179,15 @@ def finegrained_preference_dataset_collate_fn(
         elif key in ["prompt_len", "text_len"]:
             batch[key] = torch.stack(cur_values).squeeze(dim=1)
             continue
-        elif key in ["labels"]:
-            cur_values = [
-                torch.tensor(a, dtype=torch.long).unsqueeze(0) for a in cur_values
-            ]  # Ensure batch dimension
-            batch[key] = torch.cat(cur_values, dim=0)  # Stack correctly
-
+        elif key in ["label"]:
+            cur_values = [a.unsqueeze(0) for a in cur_values]
+            batch[key] = torch.cat(cur_values, dim=0)
             continue
 
         batch[key] = ref_collate_fn(cur_values)["input_ids"]
-        batch["text_attention_mask"] = torch.logical_not(
-            torch.eq(batch["text"], tokenizer.pad_token_id),
-        )
+    batch["text_attention_mask"] = torch.logical_not(
+        torch.eq(batch["text"], tokenizer.pad_token_id),
+    )
 
     return batch
 
@@ -306,16 +303,13 @@ class FinegrainedPreferenceStreamingDataset(StreamingDataset):
             idx (int): the index where we fetch the data in the StreamingDataset.
         """
         sample = super().__getitem__(idx)
-
         text = self._read_binary_tokenized_sample(sample, "text")
-        labels = torch.from_numpy(
-            np.frombuffer(sample["labels"], dtype=np.int64)
-        )  # Fix this
+        label = self._read_binary_tokenized_sample(sample, "label")
 
         text_len = len(text)
 
         return {
             "text": text,
-            "labels": labels.squeeze(0),  # Ensure correct shape
-            "text_len": torch.tensor([text_len], dtype=torch.int64),
+            "label": label,
+            "text_len": torch.Tensor([text_len]).to(torch.int64),
         }

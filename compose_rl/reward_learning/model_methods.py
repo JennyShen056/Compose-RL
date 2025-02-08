@@ -1,6 +1,12 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
+########## model_methods.py #############
+"""Reward Model Utilies."""
+
+# Copyright 2024 MosaicML ComposeRL authors
+# SPDX-License-Identifier: Apache-2.0
+
 """Reward Model Utilies."""
 
 from enum import Enum
@@ -32,10 +38,6 @@ class PairwiseRewardEnum(Enum):
     BT_EURUS = "bt_eurus"
     BELLMAN = "bellman"
     BELLMAN_EURUS = "bellman_eurus"
-
-
-class ClassifierRewardEnum(Enum):
-    BCE = "bce"
 
 
 def pairwise_forward(
@@ -166,40 +168,6 @@ def pairwise_forward(
     return outputs
 
 
-def classifier_forward(
-    model: nn.Module,
-    tokenizer: Tokenizer,
-    batch: MutableMapping,
-    policy_model_config: Optional[PretrainedConfig] = None,
-    use_attention_sequence_id: bool = False,
-    return_last: bool = True,
-    return_lm_logits: bool = False,
-) -> dict[str, torch.Tensor]:
-
-    model_output = model(
-        batch["text"],
-        attention_mask=batch["text_attention_mask"],
-        return_lm_logits=return_lm_logits,
-    )
-
-    output_scores = model_output.scores
-    if return_last:
-        # Expected Shape: (Batch Size, 1)
-        output_scores = torch.gather(
-            output_scores,
-            dim=1,
-            index=batch["text_len"].view(-1, 1) - 1,
-        )
-
-    # We need to add the labels here to compute metrics
-    outputs: dict[str, torch.Tensor] = {
-        "output_scores": output_scores,
-        "labels": batch["labels"],
-    }
-
-    return outputs
-
-
 def pairwise_loss(
     outputs: SequenceClassifierOutput,
     batch: Mapping,
@@ -256,6 +224,44 @@ def pairwise_loss(
     return loss_dict
 
 
+class ClassifierRewardEnum(Enum):
+    BCE = "bce"
+
+
+def classifier_forward(
+    model: nn.Module,
+    tokenizer: Tokenizer,
+    batch: MutableMapping,
+    policy_model_config: Optional[PretrainedConfig] = None,
+    use_attention_sequence_id: bool = False,
+    return_last: bool = True,
+    return_lm_logits: bool = False,
+) -> dict[str, torch.Tensor]:
+
+    model_output = model(
+        batch["text"],
+        attention_mask=batch["text_attention_mask"],
+        return_lm_logits=return_lm_logits,
+    )
+
+    output_scores = model_output.scores
+    if return_last:
+        # Expected Shape: (Batch Size, 1)
+        output_scores = torch.gather(
+            output_scores,
+            dim=1,
+            index=batch["text_len"].view(-1, 1) - 1,
+        )
+
+    # We need to add the labels here to compute metrics
+    outputs: dict[str, torch.Tensor] = {
+        "output_scores": output_scores,
+        "labels": batch["labels"],
+    }
+
+    return outputs
+
+
 def classifier_loss(
     outputs: SequenceClassifierOutput,
     batch: Mapping,
@@ -268,24 +274,26 @@ def classifier_loss(
     Args:
         outputs (SequenceClassifierOutput): Outputs from forwarding the model over the batch.
         batch (Mapping): Input batch of data.
-        loss_type (str): Loss type that we should compute (e.g. bce),
+        loss_type (str): Loss type that we should compute (e.g. bce).
     """
     output_scores = outputs["output_scores"]
-    labels = batch["labels"].squeeze().to(torch.long)
-
-    print(f"Output scores shape: {output_scores.shape}")
-    print(f"Labels shape: {labels.shape}")
+    labels = batch["labels"].squeeze(-1)  # Remove last dimension for CE loss
 
     if loss_type == ClassifierRewardEnum.BCE:
         loss = F.cross_entropy(
             output_scores,
-            labels,
+            batch["labels"],
         )
     else:
         raise NotImplementedError(f"Loss type: {loss_type} is not supported.")
 
+    # Add accuracy computation
+    predictions = torch.argmax(output_scores, dim=1)
+    accuracy = (predictions == labels).float().mean()
+
     loss_dict = {
         "total": loss,
+        "accuracy": accuracy,
     }
 
     return loss_dict

@@ -168,13 +168,14 @@ class UnifiedTokenizedDataset(IterableDataset):
             tokenize=True,
             add_generation_prompt=False,  # or True depending on your model needs
         )
-        label = sample["labels"]
+        # Get label - ensure it's a single integer
+        label = int(sample["labels"])  # Convert to int if not already
+        if not 0 <= label <= 4:
+            raise ValueError(f"Label {label} out of valid range 0-4")
 
         return {
             "text": np.asarray(encoded_prompt, dtype=np.int64).tobytes(),
-            "labels": np.asarray(
-                [label], dtype=np.int64
-            ).tobytes(),  # Store label correctly
+            "labels": np.asarray([label], dtype=np.int64).tobytes(),
         }
 
 
