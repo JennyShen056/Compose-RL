@@ -172,7 +172,9 @@ class UnifiedTokenizedDataset(IterableDataset):
 
         return {
             "text": np.asarray(encoded_prompt, dtype=np.int64).tobytes(),
-            "labels": np.array(label, dtype=np.int64).item(),  # Ensure integer format
+            "labels": np.asarray(
+                [label], dtype=np.int64
+            ).tobytes(),  # Store label correctly
         }
 
 

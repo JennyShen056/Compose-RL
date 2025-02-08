@@ -273,6 +273,9 @@ def classifier_loss(
     output_scores = outputs["output_scores"]
     labels = batch["labels"].squeeze().to(torch.long)
 
+    print(f"Output scores shape: {output_scores.shape}")
+    print(f"Labels shape: {labels.shape}")
+
     if loss_type == ClassifierRewardEnum.BCE:
         loss = F.cross_entropy(
             output_scores,
