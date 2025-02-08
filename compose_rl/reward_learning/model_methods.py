@@ -271,11 +271,12 @@ def classifier_loss(
         loss_type (str): Loss type that we should compute (e.g. bce),
     """
     output_scores = outputs["output_scores"]
+    labels = batch["labels"].to(torch.long)
 
     if loss_type == ClassifierRewardEnum.BCE:
         loss = F.cross_entropy(
             output_scores,
-            batch["labels"].long(),
+            labels,
         )
     else:
         raise NotImplementedError(f"Loss type: {loss_type} is not supported.")
