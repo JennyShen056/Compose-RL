@@ -275,7 +275,7 @@ def classifier_loss(
     if loss_type == ClassifierRewardEnum.BCE:
         loss = F.cross_entropy(
             output_scores,
-            batch["labels"],
+            batch["labels"].long(),
         )
     else:
         raise NotImplementedError(f"Loss type: {loss_type} is not supported.")
