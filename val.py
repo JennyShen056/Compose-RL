@@ -1,37 +1,33 @@
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from composer.trainer import Trainer  # Composer's Trainer to load .distcp checkpoints
 
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # ✅ Path to Composer checkpoint directory (not individual files)
-    model_checkpoint = "/tmp/reward_model/ep1-ba125/"
+    # ✅ Define paths
+    model_checkpoint = (
+        "/tmp/reward_model/ep1-ba125/"  # Path to the Composer checkpoint folder
+    )
     tokenizer_name = "meta-llama/Llama-3.1-8B-Instruct"
 
     # ✅ Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Free up memory
-    torch.cuda.empty_cache()
-
-    # ✅ Initialize the model architecture
+    # ✅ Initialize model architecture (Ensure num_labels matches trained classes)
     model = AutoModelForSequenceClassification.from_pretrained(
         tokenizer_name, num_labels=5
-    ).half()
+    )
     model.to(device)
     model.eval()
-    model = torch.compile(model)
 
-    # ✅ Restore checkpoint correctly using Composer's Trainer
-    trainer = Trainer(model=model)
-    trainer.load_checkpoint(
-        model_checkpoint
-    )  # ✅ Loads all `.distcp` shards automatically
+    # ✅ Manually load Composer checkpoint
+    checkpoint_path = "/tmp/reward_model/ep1-ba125/__0_0.distcp"  # Adjust if needed
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    # ✅ Load model weights from the checkpoint
+    model.load_state_dict(checkpoint["state"]["model"], strict=False)
 
     # ✅ Load validation dataset (First 100 samples)
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
