@@ -3,27 +3,29 @@ import sys
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer
+from composer.models import ComposerModel
+from composer.trainer import Trainer
 from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
 
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 🔥 Manually specify the correct paths
-    model_path = (
-        "/tmp/reward_model/ep1-ba125/__0_0.distcp"  # <- Ensure this is correct!
-    )
-    tokenizer_path = "meta-llama/Llama-3.1-8B-Instruct"  # <- Use the original tokenizer
+    # ✅ Define model and tokenizer paths
+    model_checkpoint = "/tmp/reward_model/ep1-ba125/__0_0.distcp"  # Adjust if needed
+    tokenizer_name = "meta-llama/Llama-3.1-8B-Instruct"  # Use the original tokenizer used in training
 
-    # ✅ Manually load tokenizer instead of AutoTokenizer.from_pretrained(model_path)
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+    # ✅ Load the tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    # ✅ Load Composer-trained model manually
-    model = ComposerHFClassifierRewardModel.load_model(model_path, tokenizer=tokenizer)
+    # ✅ Manually load model using Composer's checkpoint system
+    model = ComposerHFClassifierRewardModel(tokenizer=tokenizer)  # Initialize model
+    checkpoint = torch.load(model_checkpoint, map_location=device)  # Load checkpoint
+    model.load_state_dict(checkpoint["state"]["model"])  # Load model weights
     model.to(device)
     model.eval()
 
-    # 🔥 Load the validation dataset (First 100 samples)
+    # ✅ Load the validation dataset (First 100 samples)
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
     subset = dataset.select(range(100))
 
