@@ -195,8 +195,8 @@ def main(
             "prompt": "bytes",
         },
         "classifier": {
-            "input": "bytes",
-            "label": "int64",
+            "text": "bytes",
+            "labels": "int64",
         },
     }[dataset_type]
 

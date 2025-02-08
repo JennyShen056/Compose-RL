@@ -193,26 +193,27 @@ def pairwise_preference_dataset_collate_fn(
 
 
 def finegrained_preference_dataset_collate_fn(
-    tokenizer: PreTrainedTokenizer,
-    data: list[dict[str, Any]],
+    tokenizer: PreTrainedTokenizer, data: list[dict[str, Any]]
 ) -> dict[str, torch.Tensor]:
     texts = []
     text_lens = []
     labels = []
 
     for sample in data:
-        # Recover the token ids from bytes.
-        input_ids = torch.tensor(np.frombuffer(sample["text"], dtype=np.int64))
+        # Recover token IDs from bytes
+        input_ids = torch.tensor(
+            np.frombuffer(sample["text"], dtype=np.int64)
+        )  # Ensure "text" is used
         texts.append(input_ids)
-        text_lens.append(sample["text_len"])
         labels.append(sample["labels"])
 
     texts = torch.stack(texts)  # (batch_size, seq_length)
     text_attention_mask = (texts != tokenizer.pad_token_id).to(torch.int64)
+    text_lens = torch.tensor(text_lens, dtype=torch.int64)
     labels = torch.tensor(labels, dtype=torch.int64)
 
     return {
-        "text": texts,
+        "text": texts,  # Must match expected key
         "text_attention_mask": text_attention_mask,
         "labels": labels,
     }
