@@ -1,6 +1,8 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
+########## preference_data.py #############
+
 """Build a reward dataset and dataloader for training."""
 
 import logging
@@ -138,46 +140,80 @@ def pairwise_preference_dataset_collate_fn(
     return return_dict
 
 
+# def finegrained_preference_dataset_collate_fn(
+#     tokenizer: PreTrainedTokenizer,
+#     max_seq_len: int,
+#     data: dict,
+# ) -> dict[str, Any]:
+#     """Collator for fine-grained preference data.
+
+#     Args:
+#         tokenizer (Tokenizer): The model's tokenizer.
+#         max_seq_len (int): The maximum sequence length of the model.
+#         data (dict): The preference data to collate.
+#     """
+#     del max_seq_len
+#     if tokenizer.pad_token_id is None:
+#         raise ValueError("Tokenizer must have a PAD token.")
+#     ref_collate_fn = DataCollatorForLanguageModeling(
+#         tokenizer=tokenizer,
+#         mlm=False,
+#         mlm_probability=0.0,
+#     )
+
+#     keys = data[0].keys()
+#     batch = {}
+#     for key in keys:
+#         cur_values = [item[key] for item in data]
+#         if key == "prompt_mask":
+#             max_len = max([len(val) for val in cur_values])
+#             mask = torch.stack(
+#                 [
+#                     torch.cat([torch.Tensor(val), torch.ones(max_len - len(val))])
+#                     for val in cur_values
+#                 ]
+#             )
+#             mask = ~mask.to(torch.bool)
+#             batch[key] = mask.to(torch.int8)
+#             continue
+#         elif key in ["prompt_len", "text_len"]:
+#             batch[key] = torch.stack(cur_values).squeeze(dim=1)
+#             continue
+#         elif key in ["label"]:
+#             cur_values = [a.unsqueeze(0) for a in cur_values]
+#             batch[key] = torch.cat(cur_values, dim=0)
+#             continue
+
+#         batch[key] = ref_collate_fn(cur_values)["input_ids"]
+#     batch["text_attention_mask"] = torch.logical_not(
+#         torch.eq(batch["text"], tokenizer.pad_token_id),
+#     )
+
+#     return batch
+
+
 def finegrained_preference_dataset_collate_fn(
     tokenizer: PreTrainedTokenizer,
-    max_seq_len: int,
-    data: dict,
-) -> dict[str, Any]:
-    """Collator for fine-grained preference data.
-
-    Args:
-        tokenizer (Tokenizer): The model's tokenizer.
-        max_seq_len (int): The maximum sequence length of the model.
-        data (dict): The preference data to collate.
-    """
-    del max_seq_len
-    if tokenizer.pad_token_id is None:
-        raise ValueError("Tokenizer must have a PAD token.")
-    ref_collate_fn = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=False,
-        mlm_probability=0.0,
-    )
-
-    input_ids = []
-    attention_masks = []
+    data: list[dict[str, Any]],
+) -> dict[str, torch.Tensor]:
+    texts = []
     text_lens = []
     labels = []
 
     for sample in data:
-        input_ids.append(sample["input"])
+        # Recover the token ids from bytes.
+        input_ids = torch.tensor(np.frombuffer(sample["text"], dtype=np.int64))
+        texts.append(input_ids)
         text_lens.append(sample["text_len"])
-        labels.append(sample["label"])
+        labels.append(sample["labels"])
 
-    input_ids = ref_collate_fn(input_ids)["input_ids"]
-    attention_masks = torch.logical_not(torch.eq(input_ids, tokenizer.pad_token_id))
-    text_lens = torch.stack(text_lens).squeeze(dim=1)
-    labels = torch.stack(labels).squeeze(dim=1)
+    texts = torch.stack(texts)  # (batch_size, seq_length)
+    text_attention_mask = (texts != tokenizer.pad_token_id).to(torch.int64)
+    labels = torch.tensor(labels, dtype=torch.int64)
 
     return {
-        "input_ids": input_ids,
-        "text_attention_mask": attention_masks,
-        "text_len": text_lens,
+        "text": texts,
+        "text_attention_mask": text_attention_mask,
         "labels": labels,
     }
 

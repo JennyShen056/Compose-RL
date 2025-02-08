@@ -1,6 +1,8 @@
 # Copyright 2024 MosaicML ComposeRL authors
 # SPDX-License-Identifier: Apache-2.0
 
+########## unified_tokenize_dataset.py #############
+
 """A unified script to create prompt datasets for different data types."""
 
 import argparse
@@ -106,25 +108,52 @@ class UnifiedTokenizedDataset(IterableDataset):
 
         return {"prompt": np.asarray(encoded_prompt).tobytes()}
 
+    # def _dummy_process_classifier_sample(self, sample: Any):
+    #     """A dummy process a classifier sample.
+
+    #     Args:
+    #         sample (Any): a sample from the dataset
+    #     """
+    #     messages = [
+    #         {
+    #             "role": "user",
+    #             "content": f"This is a test",
+    #         }
+    #     ]
+    #     encoded_prompt = self.tokenizer.apply_chat_template(
+    #         messages,
+    #         tokenize=True,
+    #     )
+
+    #     label = np.random.randint(0, 2, size=(1,))
+
+    #     return {
+    #         "input": np.asarray(encoded_prompt).tobytes(),
+    #         "label": np.asarray(label).tobytes(),
+    #     }
+
     def _dummy_process_classifier_sample(self, sample: Any):
         """A dummy process a classifier sample.
 
         Args:
             sample (Any): a sample from the dataset
         """
+        # Get the raw text and label from the dataset
+        messages = sample["text"]
+        labels = sample["labels"]
 
-        text = sample["text"]
-        encoded_text = self.tokenizer.apply_chat_template(
-            text,
+        # Tokenize the text with truncation and padding (using your max_length)
+        encoded_prompt = self.tokenizer.apply_chat_template(
+            messages,
             tokenize=True,
+            add_generation_prompt=False,
         )
 
-        # Convert label to int64 numpy array and ensure it's a single value
-        label = np.array([sample["labels"]], dtype=np.int64)
-
         return {
-            "input": np.asarray(encoded_text).tobytes(),
-            "label": label.tobytes(),
+            "text": np.asarray(encoded_prompt, dtype=np.int64).tobytes(),
+            "labels": np.array(
+                labels, dtype=np.int64
+            ).item(),  # converts a single int into a Python int
         }
 
 
@@ -148,7 +177,7 @@ def main(
         },
         "classifier": {
             "input": "bytes",
-            "label": "bytes",
+            "label": "int64",
         },
     }[dataset_type]
 

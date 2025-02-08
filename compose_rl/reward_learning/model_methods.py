@@ -177,7 +177,7 @@ def classifier_forward(
 ) -> dict[str, torch.Tensor]:
 
     model_output = model(
-        batch["input_ids"],
+        batch["text"],
         attention_mask=batch["text_attention_mask"],
         return_lm_logits=return_lm_logits,
     )
