@@ -1,11 +1,7 @@
 import os
-import sys
 import torch
 from datasets import load_dataset
-from transformers import AutoTokenizer
-from composer.models import ComposerModel
-from composer.trainer import Trainer
-from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 
 def main():
@@ -13,19 +9,25 @@ def main():
 
     # ✅ Define model and tokenizer paths
     model_checkpoint = "/tmp/reward_model/ep1-ba125/__0_0.distcp"  # Adjust if needed
-    tokenizer_name = "meta-llama/Llama-3.1-8B-Instruct"  # Use the original tokenizer used in training
+    tokenizer_name = "meta-llama/Llama-3.1-8B-Instruct"  # Use the original tokenizer
 
     # ✅ Load the tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    # ✅ Manually load model using Composer's checkpoint system
-    model = ComposerHFClassifierRewardModel(tokenizer=tokenizer)  # Initialize model
-    checkpoint = torch.load(model_checkpoint, map_location=device)  # Load checkpoint
-    model.load_state_dict(checkpoint["state"]["model"])  # Load model weights
+    # ✅ Load model architecture (Standard Hugging Face model)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        tokenizer_name, num_labels=5
+    )
     model.to(device)
     model.eval()
 
-    # ✅ Load the validation dataset (First 100 samples)
+    # ✅ Load checkpoint weights
+    checkpoint = torch.load(model_checkpoint, map_location=device)
+    model.load_state_dict(
+        checkpoint["state"]["model"]
+    )  # Ensure correct state_dict loading
+
+    # ✅ Load validation dataset (First 100 samples)
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
     subset = dataset.select(range(100))
 
@@ -46,18 +48,10 @@ def main():
         )
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
-        # ✅ Prepare batch for Composer model
-        text_len = inputs["attention_mask"].sum(dim=1)
-        batch = {
-            "text": inputs["input_ids"],
-            "text_attention_mask": inputs["attention_mask"],
-            "text_len": text_len,
-        }
-
         # ✅ Make prediction
         with torch.no_grad():
-            outputs = model.forward(batch)
-            predicted_label = torch.argmax(outputs["output_scores"], dim=1).item()
+            outputs = model(**inputs)
+            predicted_label = torch.argmax(outputs.logits, dim=1).item()
 
         # ✅ Calculate Accuracy
         if predicted_label == true_label:
