@@ -133,7 +133,7 @@ class UnifiedTokenizedDataset(IterableDataset):
     #         "label": np.asarray(label).tobytes(),
     #     }
 
-    def _process_classifier_sample(self, sample: Any):
+    def _dummy_process_classifier_sample(self, sample: Any):
         """
         Process a classifier sample from a dataset that has keys "text" and "labels".
         The "text" field is expected to be a JSON-encoded list of messages (dicts with "content" and "role").
