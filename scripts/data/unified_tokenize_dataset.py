@@ -8,6 +8,7 @@
 import argparse
 import os
 from typing import Any, Iterator, Literal
+import json
 
 import datasets as hf_datasets
 import numpy as np
@@ -132,28 +133,46 @@ class UnifiedTokenizedDataset(IterableDataset):
     #         "label": np.asarray(label).tobytes(),
     #     }
 
-    def _dummy_process_classifier_sample(self, sample: Any):
-        """A dummy process a classifier sample.
-
-        Args:
-            sample (Any): a sample from the dataset
+    def _process_classifier_sample(self, sample: Any):
         """
-        # Get the raw text and label from the dataset
-        messages = sample["text"]
-        labels = sample["labels"]
+        Process a classifier sample from a dataset that has keys "text" and "labels".
+        The "text" field is expected to be a JSON-encoded list of messages (dicts with "content" and "role").
+        """
 
-        # Tokenize the text with truncation and padding (using your max_length)
+        # Ensure "text" is a list of dictionaries (parse JSON if necessary)
+        raw_text = sample["text"]
+
+        if isinstance(
+            raw_text, str
+        ):  # If text is a string, it might be a JSON string that needs parsing
+            try:
+                messages = json.loads(
+                    raw_text
+                )  # Convert JSON string into a Python list
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Error decoding JSON from text: {raw_text}") from e
+        elif isinstance(raw_text, list):  # Already in the correct format
+            messages = raw_text
+        else:
+            raise TypeError(f"Unexpected format for text column: {type(raw_text)}")
+
+        # Ensure that each item in messages is a dictionary with "role" and "content"
+        if not all(
+            isinstance(m, dict) and "role" in m and "content" in m for m in messages
+        ):
+            raise ValueError(f"Invalid message format: {messages}")
+
+        # Use the tokenizer’s chat template functionality
         encoded_prompt = self.tokenizer.apply_chat_template(
             messages,
             tokenize=True,
-            add_generation_prompt=False,
+            add_generation_prompt=False,  # or True depending on your model needs
         )
+        label = sample["labels"]
 
         return {
             "text": np.asarray(encoded_prompt, dtype=np.int64).tobytes(),
-            "labels": np.array(
-                labels, dtype=np.int64
-            ).item(),  # converts a single int into a Python int
+            "labels": np.array(label, dtype=np.int64).item(),  # Ensure integer format
         }
 
 
