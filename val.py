@@ -7,8 +7,6 @@ from compose_rl.reward_learning.model import (
     ComposerHFClassifierRewardModel,
 )  # ✅ Correct Model Import
 
-import composer.utils.dist as dist
-
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -17,22 +15,25 @@ def main():
     model_checkpoint = "/tmp/reward_model/ep1-ba125/"
     tokenizer_name = "meta-llama/Meta-Llama-3.1-8B-Instruct"
 
+    # ✅ Force single-GPU execution (disable distributed processing)
+    os.environ["WORLD_SIZE"] = "1"
+    os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
     # ✅ Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    dist.initialize_dist()  # ✅ Initialize distributed processing before model creation
-
     # ✅ Initialize the model using Composer's custom class
     model = ComposerHFClassifierRewardModel(
-        pretrained_model_name_or_path=tokenizer_name,  # ✅ Added required argument
-        tokenizer=tokenizer,
+        pretrained_model_name_or_path=tokenizer_name, tokenizer=tokenizer
     )
     model.to(device)
     model.eval()
 
     # ✅ Restore checkpoint using Composer's Trainer
     trainer = Trainer(model=model)
-    trainer.load_checkpoint(model_checkpoint)
+    trainer.restore_checkpoint(model_checkpoint)  # ✅ Fixed method
 
     # ✅ Load validation dataset (First 100 samples)
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
