@@ -5,7 +5,13 @@ from transformers import AutoTokenizer
 
 # Import the custom classifier reward model.
 # (If your model was saved with a custom class, ensure this import works correctly.)
-from Compose_RL.compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
+import sys
+import os
+
+# Add Compose-RL to the Python module search path
+sys.path.append(os.path.abspath("Compose-RL"))
+
+from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
 
 
 def main():
