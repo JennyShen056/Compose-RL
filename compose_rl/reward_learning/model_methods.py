@@ -267,27 +267,27 @@ def classifier_loss(
     batch: Mapping,
     loss_type: ClassifierRewardEnum,
 ) -> dict[str, torch.Tensor]:
-    """Computes Classifier loss.
-
-    Given precomputed values this will compute the specified classifier loss.
+    """Computes Classifier loss for multi-class classification.
 
     Args:
-        outputs (SequenceClassifierOutput): Outputs from forwarding the model over the batch.
-        batch (Mapping): Input batch of data.
-        loss_type (str): Loss type that we should compute (e.g. bce).
+        outputs (SequenceClassifierOutput): Outputs from forwarding the model.
+        batch (Mapping): Input batch containing ground truth labels.
+        loss_type (ClassifierRewardEnum): Loss type to compute.
     """
     output_scores = outputs["output_scores"]
-    labels = batch["labels"].squeeze(-1)  # Remove last dimension for CE loss
+    labels = batch["labels"].squeeze(-1)  # Remove last dimension if present
 
     if loss_type == ClassifierRewardEnum.BCE:
+        # --- Modified: Use cross_entropy with label_smoothing explicitly set to 0 ---
         loss = F.cross_entropy(
             output_scores,
-            batch["labels"],
+            labels,  # Targets are integer class labels (0-4)
+            label_smoothing=0.0,  # Ensure no label smoothing is applied
         )
     else:
         raise NotImplementedError(f"Loss type: {loss_type} is not supported.")
 
-    # Add accuracy computation
+    # Compute accuracy as before.
     predictions = torch.argmax(output_scores, dim=1)
     accuracy = (predictions == labels).float().mean()
 
@@ -295,5 +295,4 @@ def classifier_loss(
         "total": loss,
         "accuracy": accuracy,
     }
-
     return loss_dict
