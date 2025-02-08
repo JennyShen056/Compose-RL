@@ -304,12 +304,12 @@ class FinegrainedPreferenceStreamingDataset(StreamingDataset):
         """
         sample = super().__getitem__(idx)
         text = self._read_binary_tokenized_sample(sample, "text")
-        label = self._read_binary_tokenized_sample(sample, "label")
+        labels = self._read_binary_tokenized_sample(sample, "labels")
 
         text_len = len(text)
 
         return {
             "text": text,
-            "label": label,
+            "labels": labels,
             "text_len": torch.Tensor([text_len]).to(torch.int64),
         }
