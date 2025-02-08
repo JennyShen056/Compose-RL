@@ -7,6 +7,8 @@ from compose_rl.reward_learning.model import (
     ComposerHFClassifierRewardModel,
 )  # ✅ Correct Model Import
 
+import composer.utils.dist as dist
+
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -17,6 +19,8 @@ def main():
 
     # ✅ Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+
+    dist.initialize_dist()  # ✅ Initialize distributed processing before model creation
 
     # ✅ Initialize the model using Composer's custom class
     model = ComposerHFClassifierRewardModel(
