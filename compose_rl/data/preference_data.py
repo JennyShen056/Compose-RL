@@ -180,8 +180,11 @@ def finegrained_preference_dataset_collate_fn(
             batch[key] = torch.stack(cur_values).squeeze(dim=1)
             continue
         elif key in ["labels"]:
-            cur_values = [torch.tensor(a, dtype=torch.long) for a in cur_values]
-            batch[key] = torch.stack(cur_values)
+            cur_values = [
+                torch.tensor(a, dtype=torch.long).unsqueeze(0) for a in cur_values
+            ]  # Ensure batch dimension
+            batch[key] = torch.cat(cur_values, dim=0)  # Stack correctly
+
             continue
 
         batch[key] = ref_collate_fn(cur_values)["input_ids"]
