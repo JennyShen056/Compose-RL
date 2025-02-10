@@ -1,82 +1,26 @@
-import os
 import torch
-from datasets import load_dataset
-from transformers import AutoTokenizer
-from composer.trainer import Trainer
-from compose_rl.reward_learning.model import (
-    ComposerHFClassifierRewardModel,
-)  # ✅ Correct Model Import
+from huggingface_hub import HfApi, HfFolder, Repository
 
+# Define paths
+checkpoint_path = "/tmp/reward_model/ep1-ba125/__0_0.distcp"
+hf_model_repo = "Jennny/help_reg_rm"
 
-def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Load model state dict
+state_dict = torch.load(checkpoint_path, map_location="cpu")
 
-    # ✅ Path to Composer checkpoint directory
-    model_checkpoint = "/tmp/reward_model/ep1-ba125/"
-    tokenizer_name = "meta-llama/Meta-Llama-3.1-8B-Instruct"
+# If needed, define the model class and load state
+# model = YourModelClass()
+# model.load_state_dict(state_dict)
 
-    # ✅ Force single-GPU execution (disable distributed processing)
-    os.environ["WORLD_SIZE"] = "1"
-    os.environ["RANK"] = "0"
-    os.environ["LOCAL_RANK"] = "0"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# Save the model in Hugging Face's format
+model_save_path = "huggingface_model"
+torch.save(state_dict, f"{model_save_path}/pytorch_model.bin")
 
-    # ✅ Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+# Create repository and push to Hugging Face Hub
+api = HfApi()
+api.create_repo(repo_id=hf_model_repo, exist_ok=True)
 
-    # ✅ Initialize the model using Composer's custom class
-    model = ComposerHFClassifierRewardModel(
-        pretrained_model_name_or_path=tokenizer_name, tokenizer=tokenizer
-    )
-    model.to(device)
-    model.eval()
-
-    # ✅ Restore checkpoint using Composer's Trainer
-    trainer = Trainer(model=model)
-    trainer.restore_checkpoint(model_checkpoint)  # ✅ Fixed method
-
-    # ✅ Load validation dataset (First 100 samples)
-    dataset = load_dataset("Jennny/Helpfulness", split="validation")
-    subset = dataset.select(range(100))
-
-    correct = 0
-    total = 0
-
-    for sample in subset:
-        text = sample["text"]
-        true_label = sample["labels"]
-
-        # ✅ Tokenize input
-        inputs = tokenizer(
-            text,
-            truncation=True,
-            padding="max_length",
-            max_length=512,
-            return_tensors="pt",
-        )
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-
-        # ✅ Prepare batch for Composer model
-        text_len = inputs["attention_mask"].sum(dim=1)
-        batch = {
-            "text": inputs["input_ids"],
-            "text_attention_mask": inputs["attention_mask"],
-            "text_len": text_len,
-        }
-
-        # ✅ Make prediction
-        with torch.no_grad():
-            outputs = model.forward(batch)
-            predicted_label = torch.argmax(outputs["output_scores"], dim=1).item()
-
-        # ✅ Calculate Accuracy
-        if predicted_label == true_label:
-            correct += 1
-        total += 1
-
-    accuracy = correct / total * 100
-    print(f"Accuracy on first {total} validation samples: {accuracy:.2f}%")
-
-
-if __name__ == "__main__":
-    main()
+repo = Repository(local_dir=model_save_path, clone_from=hf_model_repo)
+repo.git_add()
+repo.git_commit("Upload trained model checkpoint")
+repo.git_push()
