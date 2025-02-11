@@ -65,25 +65,15 @@ print(f"✅ Model saved successfully to {model_save_path}")
 # ====== STEP 4: UPLOAD TO HUGGING FACE ======
 print("Uploading model to Hugging Face...")
 
+# Authenticate automatically (no token needed in code)
 api = HfApi()
-api.create_repo(repo_id=hf_model_repo, exist_ok=True)
+api.create_repo(repo_id=f"{HF_USERNAME}/{HF_MODEL_NAME}", exist_ok=True)
 
-# Clone the repository locally
-repo = Repository(local_dir=model_save_path, clone_from=hf_model_repo)
-
-# Add model card
-readme_content = f"""# {HF_MODEL_NAME}
-
-This is a fine-tuned LLaMA 3 reward model, trained using MosaicML and converted to Hugging Face format.
-"""
-with open(f"{model_save_path}/README.md", "w") as f:
-    f.write(readme_content)
-
-# Push to Hugging Face Hub
-repo.git_add()
-repo.git_commit("Upload converted model")
-repo.git_push()
-
-print(
-    f"🎉 Model uploaded successfully! View it here: https://huggingface.co/{hf_model_repo}"
+repo = Repository(
+    local_dir=model_save_path,
+    clone_from=f"https://huggingface.co/{HF_USERNAME}/{HF_MODEL_NAME}",
 )
+
+repo.git_add()
+repo.git_commit("Upload converted model with LFS tracking")
+repo.git_push()
