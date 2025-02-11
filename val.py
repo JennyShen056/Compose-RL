@@ -39,7 +39,7 @@ state_dict = {}
 
 # Use FileSystemReader to load sharded checkpoint properly
 reader = FileSystemReader(distcp_checkpoint_path)
-dist_cp.load(state_dict=state_dict, storage_reader=reader, no_dist=True)
+dist_cp.load(state_dict=state_dict, storage_reader=reader)
 
 # Ensure key mapping matches Hugging Face structure
 new_state_dict = {}
