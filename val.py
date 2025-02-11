@@ -1,7 +1,7 @@
 import os
 import torch
-import torch.distributed._shard.checkpoint as dist_cp
-from torch.distributed._shard.checkpoint import FileSystemReader
+import torch.distributed.checkpoint as dist_cp  # Updated import
+from torch.distributed.checkpoint import FileSystemReader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from huggingface_hub import HfApi, Repository
 
@@ -31,20 +31,24 @@ tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name)
 
 print("Base model loaded successfully.")
 
-# ====== STEP 2: LOAD SHARDED CHECKPOINT ======
+# ====== STEP 2: LOAD SHARDED CHECKPOINT WITH PROPER MAPPING ======
 print("Loading sharded checkpoint from:", distcp_checkpoint_path)
 
-state_dict = {"model": model.state_dict()}
+# Initialize an empty state_dict
+state_dict = {}
 
-# Load the checkpoint using FileSystemReader
-dist_cp.load_state_dict(
-    state_dict=state_dict,
-    storage_reader=FileSystemReader(distcp_checkpoint_path),
-    no_dist=True,  # Ensure single-device loading
-)
+# Use FileSystemReader to load sharded checkpoint properly
+reader = FileSystemReader(distcp_checkpoint_path)
+dist_cp.load(state_dict=state_dict, storage_reader=reader, no_dist=True)
 
-# Update model weights with loaded state
-model.load_state_dict(state_dict["model"], strict=False)
+# Ensure key mapping matches Hugging Face structure
+new_state_dict = {}
+for key, value in state_dict.items():
+    new_key = key.replace("model.", "")  # Remove prefix if needed
+    new_state_dict[new_key] = value
+
+# Load the model's state dict with strict=False to allow mismatches
+model.load_state_dict(new_state_dict, strict=False)
 
 print("Sharded checkpoint successfully loaded into model.")
 
@@ -56,7 +60,7 @@ os.makedirs(model_save_path, exist_ok=True)
 model.save_pretrained(model_save_path)
 tokenizer.save_pretrained(model_save_path)
 
-print(f"Model saved successfully to {model_save_path}")
+print(f"✅ Model saved successfully to {model_save_path}")
 
 # ====== STEP 4: UPLOAD TO HUGGING FACE ======
 print("Uploading model to Hugging Face...")
