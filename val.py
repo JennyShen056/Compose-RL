@@ -74,12 +74,23 @@ repo = Repository(
     clone_from=f"https://huggingface.co/{HF_USERNAME}/{HF_MODEL_NAME}",
 )
 
-repo.git_add()
-repo.git_commit("Upload converted model with LFS tracking")
+import subprocess
 
 # Ensure repository is properly set up for pushing
 os.system("cd huggingface_model && git pull origin main --rebase")
-os.system("cd huggingface_model && git branch --set-upstream-to=origin/main main")
 
-# Push to Hugging Face
-repo.git_push()
+# Ensure large files (model, tokenizer) are tracked with LFS
+os.system("cd huggingface_model && git lfs install")
+os.system("cd huggingface_model && git lfs track '*.bin' '*.json' '*.pt'")
+
+# Add all changes, commit, and push
+subprocess.run("cd huggingface_model && git add .", shell=True)
+subprocess.run(
+    "cd huggingface_model && git commit -m 'Upload converted model with LFS tracking' || echo 'No changes to commit'",
+    shell=True,
+)
+subprocess.run("cd huggingface_model && git push origin main", shell=True)
+
+print(
+    f"🎉 Model uploaded successfully! View it here: https://huggingface.co/{hf_model_repo}"
+)
