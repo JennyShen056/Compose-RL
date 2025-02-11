@@ -76,4 +76,10 @@ repo = Repository(
 
 repo.git_add()
 repo.git_commit("Upload converted model with LFS tracking")
+
+# Ensure repository is properly set up for pushing
+os.system("cd huggingface_model && git pull origin main --rebase")
+os.system("cd huggingface_model && git branch --set-upstream-to=origin/main main")
+
+# Push to Hugging Face
 repo.git_push()
