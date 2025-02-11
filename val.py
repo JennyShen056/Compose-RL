@@ -44,7 +44,7 @@ dist_cp.load_state_dict(
 )
 
 # Update model weights with loaded state
-model.load_state_dict(state_dict["model"])
+model.load_state_dict(state_dict["model"], strict=False)
 
 print("Sharded checkpoint successfully loaded into model.")
 
