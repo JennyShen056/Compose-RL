@@ -19,7 +19,7 @@ os.makedirs(model_save_path, exist_ok=True)
 # ====== STEP 1: LOAD SHARDED CHECKPOINT ======
 try:
     print(f"Loading sharded checkpoint from {checkpoint_dir}...")
-    state_dict = load_checkpoint(checkpoint_dir, map_location="cpu")
+    state_dict = load_checkpoint(checkpoint_dir)
     print("Checkpoint loaded successfully!")
 except Exception as e:
     print(f"Failed to load checkpoint using Composer: {e}")
