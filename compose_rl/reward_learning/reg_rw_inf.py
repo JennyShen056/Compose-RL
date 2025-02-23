@@ -1,7 +1,7 @@
 from typing import List, Optional, Any, Mapping, MutableMapping
 import torch
 from torch import nn
-from transformers import AutoTokenizer, AutoModel, AutoConfig  # ✅ Add AutoModel and AutoConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig  # ✅ Add AutoModel and AutoConfig
 import boto3
 import os
 
@@ -96,7 +96,7 @@ class RewardModelHandler:
     def load_model(self):
         """Load tokenizer and model from the local S3-downloaded directory."""
         self.tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_DIR, trust_remote_code=True)
-        self.model = AutoModel.from_pretrained(LOCAL_MODEL_DIR, trust_remote_code=True)
+        self.model = AutoModelForCausalLM.from_pretrained(LOCAL_MODEL_DIR, trust_remote_code=True)
     
         # Wrap in reward model interface
         self.model = ComposerHFClassifierRewardModel(tokenizer=self.tokenizer)
