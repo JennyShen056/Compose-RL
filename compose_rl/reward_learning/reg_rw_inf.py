@@ -20,7 +20,7 @@ from compose_rl.reward_learning.hf_utils import SequenceClassifierOutput
 
 # S3 configuration
 S3_BUCKET = "mybucket-jenny-test"
-S3_MODEL_PATH = "rlhf-checkpoints/reg-rm/hf/ba125"
+S3_MODEL_PATH = "rlhf-checkpoints/reg-rm/hf/huggingface/ba125/"
 LOCAL_MODEL_DIR = "/tmp/reward_model"
 
 class ComposerHFClassifierRewardModel(ComposerHFSequenceClassification, RewardModel):
