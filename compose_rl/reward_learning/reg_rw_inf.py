@@ -1,7 +1,7 @@
 from typing import List, Optional, Any, Mapping, MutableMapping
 import torch
 from torch import nn
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModel, AutoConfig  # ✅ Add AutoModel and AutoConfig
 import boto3
 import os
 
