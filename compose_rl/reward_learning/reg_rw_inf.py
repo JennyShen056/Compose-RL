@@ -95,9 +95,9 @@ class RewardModelHandler:
 
     def load_model(self):
         """Load tokenizer and model from the local S3-downloaded directory."""
-        self.tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_DIR)
-        self.model = AutoModelForSequenceClassification.from_pretrained(LOCAL_MODEL_DIR)
-
+        self.tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_DIR, trust_remote_code=True)
+        self.model = AutoModelForSequenceClassification.from_pretrained(LOCAL_MODEL_DIR, trust_remote_code=True)
+    
         # Wrap in reward model interface
         self.model = ComposerHFClassifierRewardModel(tokenizer=self.tokenizer)
 
