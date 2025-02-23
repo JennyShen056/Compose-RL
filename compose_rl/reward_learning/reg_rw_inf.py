@@ -113,13 +113,13 @@ class RewardModelHandler:
 
 # Load Hugging Face dataset
 print("Loading dataset from Hugging Face...")
-dataset = load_dataset("Jennny/Helpfulness")
+dataset = load_dataset("nvidia/HelpSteer2")
 
 # Select 5 samples from the validation split
 val_samples = dataset["validation"].select(range(5))
 
 # Extract the "text" column for inference
-text_samples = val_samples["text"]
+text_samples = val_samples["response"]
 
 # Initialize and run reward model
 if __name__ == "__main__":
