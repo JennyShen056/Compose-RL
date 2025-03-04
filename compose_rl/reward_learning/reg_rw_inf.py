@@ -1,21 +1,51 @@
-"""Inference module for loading and using the ClassifierRewardModel trained with ComposeRL."""
+#!/usr/bin/env python3
+"""
+Classifier Reward Model Inference Script
+"""
 
 import os
+import sys
 import logging
+import argparse
 from typing import Dict, Optional, Union, List, Any, Mapping, MutableMapping
 
+# Add llm-foundry to the Python path
+sys.path.append("/llm-foundry")
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+# Now import the necessary modules
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
-# Import the required modules directly from the current directory
-# since we're already in the compose_rl/reward_learning directory
-from model import ComposerHFClassifierRewardModel
-from hf_utils import RewardModelConfig, SequenceClassifierOutput
-from base_reward import RewardModel
+# Import the necessary components from compose_rl
+# First, make sure compose_rl is in the path
+compose_rl_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+if compose_rl_path not in sys.path:
+    sys.path.append(compose_rl_path)
 
-logger = logging.getLogger(__name__)
+# Import the model components
+try:
+    from compose_rl.reward_learning.hf_utils import (
+        RewardModelConfig,
+        SequenceClassifierOutput,
+    )
+    from compose_rl.reward_learning.base_reward import RewardModel
+    from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
+except ImportError as e:
+    logger.error(f"Failed to import from compose_rl: {e}")
+    logger.info("Trying direct imports...")
+
+    # Try direct imports as a fallback
+    from hf_utils import RewardModelConfig, SequenceClassifierOutput
+    from base_reward import RewardModel
+    from model import ComposerHFClassifierRewardModel
 
 
 class ClassifierRewardModel:
@@ -65,15 +95,14 @@ class ClassifierRewardModel:
                 raise RuntimeError(f"Failed to download model from S3: {e}")
 
         # Load tokenizer
+        logger.info(f"Loading tokenizer from {model_path}")
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-
-        # Load the model using the ComposeRL framework
-        logger.info(f"Loading model from {model_path}")
 
         # Create a tokenizer wrapper that matches what ComposeRL expects
         tokenizer_wrapper = self._create_tokenizer_wrapper(self.tokenizer)
 
         # Initialize the model with the ComposeRL class
+        logger.info(f"Loading model from {model_path}")
         self.model = ComposerHFClassifierRewardModel(
             pretrained_model_name_or_path=model_path,
             tokenizer=tokenizer_wrapper,
@@ -229,3 +258,69 @@ class ClassifierRewardModel:
             scores = scores.squeeze(1)
 
         return scores
+
+
+def run_inference(model_path, prompts=None, responses=None):
+    """
+    Run inference with the classifier reward model
+    """
+    # Load the model
+    reward_model = ClassifierRewardModel(model_path)
+
+    # If no prompts/responses provided, use test examples
+    if prompts is None or responses is None:
+        prompts = [
+            "What is the capital of France?",
+            "Explain how a transformer model works.",
+        ]
+        responses = [
+            "The capital of France is Paris.",
+            "A transformer model is a neural network architecture that uses self-attention mechanisms to process sequential data.",
+        ]
+
+    # Get reward scores
+    scores = reward_model.get_reward(prompts, responses)
+
+    # Print results
+    for i, (prompt, response, score) in enumerate(zip(prompts, responses, scores)):
+        print(f"\nExample {i+1}:")
+        print(f"Prompt: {prompt}")
+        print(f"Response: {response}")
+        print(f"Score: {score.item():.2f}")
+
+    return scores
+
+
+def main():
+    """
+    Main entry point with command line argument parsing
+    """
+    parser = argparse.ArgumentParser(
+        description="Run inference with a classifier reward model"
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="s3://mybucket-jenny-test/rlhf-checkpoints/reg-rm/hf/huggingface/ba125/",
+        help="Path to the reward model (local or S3)",
+    )
+    parser.add_argument(
+        "--prompt", type=str, default=None, help="Optional single prompt to evaluate"
+    )
+    parser.add_argument(
+        "--response",
+        type=str,
+        default=None,
+        help="Optional single response to evaluate",
+    )
+
+    args = parser.parse_args()
+
+    prompts = [args.prompt] if args.prompt else None
+    responses = [args.response] if args.response else None
+
+    run_inference(args.model_path, prompts, responses)
+
+
+if __name__ == "__main__":
+    main()
