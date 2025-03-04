@@ -1,8 +1,6 @@
 import os
 import torch
-from transformers import AutoTokenizer, AutoConfig
-from compose_rl.reward_learning.modeling_hf import ComposerHFSequenceClassification
-from compose_rl.reward_learning.model_methods import ClassifierRewardEnum
+from transformers import AutoTokenizer, AutoConfig, AutoModelForSequenceClassification
 from datasets import load_dataset
 from tqdm import tqdm
 import numpy as np
@@ -11,6 +9,15 @@ import json
 import boto3
 from botocore.exceptions import ClientError
 import logging
+import sys
+
+# Add Compose-RL to path if needed
+compose_rl_path = "/Compose-RL"
+if compose_rl_path not in sys.path:
+    sys.path.append(compose_rl_path)
+
+from compose_rl.reward_learning.modeling_hf import ComposerHFSequenceClassification
+from compose_rl.reward_learning.model_methods import ClassifierRewardEnum
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -120,8 +127,15 @@ def main():
     s3_prefix = "rlhf-checkpoints/reg-rm/hf/huggingface/ba125/"
     local_model_dir = "./reward_model"
 
-    # Uncomment to download the model if needed
+    # You can uncomment to download the model
     # download_from_s3(s3_bucket, s3_prefix, local_model_dir)
+
+    # Use local path if available, otherwise try s3 path
+    model_path = (
+        local_model_dir
+        if os.path.exists(local_model_dir)
+        else f"s3://{s3_bucket}/{s3_prefix}"
+    )
 
     # Initialize tokenizer
     logger.info("Loading tokenizer...")
@@ -129,37 +143,48 @@ def main():
         "meta-llama/Meta-Llama-3.1-8B-Instruct", use_auth_token=True
     )
 
-    # Load model configuration
+    # Approach 1: Load directly with AutoModelForSequenceClassification
+    logger.info("Loading model using AutoModelForSequenceClassification...")
     try:
-        logger.info("Loading model config...")
-        model_path = (
-            local_model_dir
-            if os.path.exists(local_model_dir)
-            else f"s3://{s3_bucket}/{s3_prefix}"
-        )
-        config = AutoConfig.from_pretrained(
+        # Load model directly with AutoModelForSequenceClassification
+        model = AutoModelForSequenceClassification.from_pretrained(
             model_path, trust_remote_code=True, use_auth_token=True
         )
+        direct_load_success = True
     except Exception as e:
-        logger.error(f"Error loading config: {e}")
-        config = AutoConfig.from_pretrained(
-            "meta-llama/Meta-Llama-3.1-8B-Instruct",
-            num_labels=5,
-            trust_remote_code=True,
-            use_auth_token=True,
-        )
+        logger.error(f"Error loading with AutoModelForSequenceClassification: {e}")
+        direct_load_success = False
 
-    # Initialize the reward model
-    logger.info("Initializing reward model...")
-    model = ComposerHFClassifierRewardModel(
-        model_name_or_path=model_path,
-        tokenizer=tokenizer,
-        config=config,
-        loss_type="bce",
-        return_last=True,
-        pretrained=True,
-        use_auth_token=True,
-    )
+    if not direct_load_success:
+        # Approach 2: If Approach 1 fails, try with custom class
+        logger.info(
+            "Attempting to load with custom ComposerHFClassifierRewardModel class..."
+        )
+        try:
+            # Load config
+            config = AutoConfig.from_pretrained(
+                "meta-llama/Meta-Llama-3.1-8B-Instruct",
+                num_labels=5,
+                trust_remote_code=True,
+                use_auth_token=True,
+            )
+
+            # Initialize model with config first
+            model = ComposerHFClassifierRewardModel(
+                tokenizer=tokenizer,
+                config=config,
+                loss_type="bce",
+                return_last=True,
+                pretrained=True,
+            )
+
+            # Then load state dict
+            state_dict = torch.load(f"{local_model_dir}/pytorch_model.bin")
+            model.load_state_dict(state_dict)
+        except Exception as e:
+            logger.error(f"Error loading with custom class: {e}")
+            logger.error("Both loading approaches failed. Exiting.")
+            return
 
     model.to(device)
     model.eval()
@@ -185,18 +210,24 @@ def main():
         )
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
-        # Create batch for model's forward method
-        batch = {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs["attention_mask"],
-            "is_inference": True,
-        }
-
         # Inference
         with torch.no_grad():
-            # Model returns logits
-            outputs = model.forward(batch)
-            logits = outputs if isinstance(outputs, torch.Tensor) else outputs.logits
+            # Handle different model types
+            if direct_load_success:
+                # Standard HF model
+                outputs = model(**inputs)
+                logits = outputs.logits
+            else:
+                # Custom model
+                batch = {
+                    "input_ids": inputs["input_ids"],
+                    "attention_mask": inputs["attention_mask"],
+                    "is_inference": True,
+                }
+                outputs = model.forward(batch)
+                logits = (
+                    outputs if isinstance(outputs, torch.Tensor) else outputs.logits
+                )
 
             # Get predicted class (0-4)
             predicted_class = torch.argmax(logits, dim=-1).item()
@@ -238,7 +269,7 @@ def main():
         pct = (error_dist == i).mean() * 100
         logger.info(f"Error = {i}: {pct:.2f}%")
 
-    # Optional: Save predictions to file
+    # Save predictions to file
     output_file = "reward_model_predictions.csv"
     with open(output_file, "w") as f:
         f.write("true_label,predicted_label\n")
