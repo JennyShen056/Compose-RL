@@ -1,122 +1,23 @@
-#!/usr/bin/env python3
-"""
-Classifier Reward Model Inference Script with improved S3 handling
-"""
+"""Inference module for loading and using the ClassifierRewardModel trained with ComposeRL."""
 
 import os
-import sys
 import logging
-import argparse
 from typing import Dict, Optional, Union, List, Any, Mapping, MutableMapping
 
-# Add llm-foundry to the Python path
-sys.path.append("/llm-foundry")
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-# Now import the necessary modules
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
-# Import the necessary components from compose_rl
-# First, make sure compose_rl is in the path
-compose_rl_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
-if compose_rl_path not in sys.path:
-    sys.path.append(compose_rl_path)
+# Import the required compose_rl modules
+from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
+from compose_rl.reward_learning.hf_utils import (
+    RewardModelConfig,
+    SequenceClassifierOutput,
+)
+from compose_rl.reward_learning.base_reward import RewardModel
 
-# Import the model components
-try:
-    from compose_rl.reward_learning.hf_utils import (
-        RewardModelConfig,
-        SequenceClassifierOutput,
-    )
-    from compose_rl.reward_learning.base_reward import RewardModel
-    from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
-except ImportError as e:
-    logger.error(f"Failed to import from compose_rl: {e}")
-    logger.info("Trying direct imports...")
-
-    # Try direct imports as a fallback
-    from hf_utils import RewardModelConfig, SequenceClassifierOutput
-    from base_reward import RewardModel
-    from model import ComposerHFClassifierRewardModel
-
-
-def find_model_in_s3(s3_path):
-    """
-    Explore S3 path to find the actual model path
-    """
-    try:
-        import boto3
-        from urllib.parse import urlparse
-
-        # Parse the S3 URI
-        parsed_url = urlparse(s3_path)
-        bucket_name = parsed_url.netloc
-        prefix = parsed_url.path.lstrip("/")
-
-        # Initialize S3 client
-        s3_client = boto3.client("s3")
-        logger.info(f"Exploring S3 bucket: {bucket_name}, prefix: {prefix}")
-
-        # If prefix ends with a slash, it's likely a directory
-        if prefix.endswith("/"):
-            prefix = prefix.rstrip("/")
-
-        # Paths to explore
-        paths_to_check = [
-            prefix,  # Original path
-            f"{prefix}/",  # Original path as directory
-            f"{prefix}ba125/",  # Specific subfolder mentioned in error
-            "rlhf-checkpoints/reg-rm/hf/latest/",  # Common pattern
-            "rlhf-checkpoints/reg-rm/latest/",  # Another common pattern
-        ]
-
-        # Check for HF model files in each path
-        for path in paths_to_check:
-            logger.info(f"Checking path: {path}")
-
-            # Check for model files
-            model_files = ["config.json", "pytorch_model.bin", "model.safetensors"]
-            for file in model_files:
-                try:
-                    file_key = f"{path}{file}"
-                    s3_client.head_object(Bucket=bucket_name, Key=file_key)
-                    logger.info(f"Found model file: {file} at {path}")
-                    return f"s3://{bucket_name}/{path}"
-                except Exception as e:
-                    # File not found at this path, try next file or path
-                    pass
-
-            # Check if the path exists as a directory containing files
-            try:
-                response = s3_client.list_objects_v2(
-                    Bucket=bucket_name, Prefix=path, Delimiter="/", MaxKeys=10
-                )
-
-                if "Contents" in response:
-                    logger.info(f"Found directory at: {path}")
-                    # Look for model files
-                    for obj in response["Contents"]:
-                        file_name = os.path.basename(obj["Key"])
-                        if file_name in model_files:
-                            logger.info(f"Found model file: {file_name} at {path}")
-                            return f"s3://{bucket_name}/{path}"
-            except Exception as e:
-                logger.error(f"Error listing objects at {path}: {e}")
-
-        logger.warning(f"Could not find model files in any of the expected paths")
-        return s3_path  # Return original path if nothing found
-
-    except Exception as e:
-        logger.error(f"Error exploring S3: {e}")
-        return s3_path
+logger = logging.getLogger(__name__)
 
 
 class ClassifierRewardModel:
@@ -141,67 +42,64 @@ class ClassifierRewardModel:
         self.device = device
         self.torch_dtype = torch_dtype
 
-        # If path is S3, try to find the actual model files
+        # Handle S3 paths by downloading to a temp location if needed
         if model_path.startswith("s3://"):
             try:
-                # First, try to explore S3 to find the model
-                model_path = find_model_in_s3(model_path)
-                logger.info(f"Using model path: {model_path}")
+                import boto3
+                from urllib.parse import urlparse
 
-                # Now try to load directly from the path
-                logger.info("Attempting to load directly from S3 path")
+                parsed_url = urlparse(model_path)
+                bucket_name = parsed_url.netloc
+                key = parsed_url.path.lstrip("/")
+
+                s3_client = boto3.client("s3")
+                local_path = os.path.join("/tmp", os.path.basename(key))
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+                logger.info(f"Downloading model from {model_path} to {local_path}")
+                s3_client.download_file(bucket_name, key, local_path)
+                model_path = local_path
+            except ImportError:
+                raise ImportError(
+                    "boto3 is required for loading from S3. Install with: pip install boto3"
+                )
             except Exception as e:
-                logger.warning(f"Error exploring S3: {e}")
+                raise RuntimeError(f"Failed to download model from S3: {e}")
 
-        # Try to load the model with various approaches
-        # First, try loading the tokenizer
-        try:
-            logger.info(f"Loading tokenizer from {model_path}")
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                model_path,
-                trust_remote_code=True,
-                use_auth_token=os.environ.get("HF_TOKEN"),
-            )
-            logger.info(
-                f"Successfully loaded tokenizer: {self.tokenizer.__class__.__name__}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to load tokenizer: {e}")
-            # Try a default tokenizer as fallback
-            try:
-                logger.info(
-                    "Falling back to meta-llama/Meta-Llama-3.1-8B-Instruct tokenizer"
-                )
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    "meta-llama/Meta-Llama-3.1-8B-Instruct",
-                    trust_remote_code=True,
-                    use_auth_token=os.environ.get("HF_TOKEN"),
-                )
-            except Exception as e2:
-                logger.error(f"Failed to load fallback tokenizer: {e2}")
-                raise RuntimeError("Could not load any tokenizer")
+        # Load tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+        # Load the model using the ComposeRL framework
+        logger.info(f"Loading model from {model_path}")
 
         # Create a tokenizer wrapper that matches what ComposeRL expects
         tokenizer_wrapper = self._create_tokenizer_wrapper(self.tokenizer)
 
         # Initialize the model with the ComposeRL class
-        try:
-            logger.info(f"Loading model from {model_path}")
-            # Add extra parameters to handle various loading scenarios
-            self.model = ComposerHFClassifierRewardModel(
-                pretrained_model_name_or_path=model_path,
-                tokenizer=tokenizer_wrapper,
-                use_train_metrics=False,
-                loss_type="bce",
-                return_last=True,
-                return_lm_logits=False,
-                use_auth_token=os.environ.get("HF_TOKEN"),  # Use HF token if available
-                trust_remote_code=True,
-            )
-            logger.info("Successfully loaded model")
-        except Exception as e:
-            logger.error(f"Error loading model: {e}")
-            raise
+        self.model = ComposerHFClassifierRewardModel(
+            pretrained_model_name_or_path=model_path,
+            tokenizer=tokenizer_wrapper,
+            use_train_metrics=False,
+            loss_type="bce",
+            return_last=True,
+            return_lm_logits=False,
+        )
+
+        # Move model to device and set to evaluation mode
+        if hasattr(self.model, "model"):
+            self.model.model.to(device=self.device, dtype=self.torch_dtype)
+            self.model.model.eval()
+        else:
+            self.model.to(device=self.device, dtype=self.torch_dtype)
+            self.model.eval()
+
+        # Get number of labels
+        if hasattr(self.model, "model") and hasattr(self.model.model, "config"):
+            self.num_labels = getattr(self.model.model.config, "num_labels", 5)
+        else:
+            self.num_labels = 5  # Default to 5 for 0-4 range
+
+        logger.info(f"Loaded classifier model with {self.num_labels} labels")
 
     def _create_tokenizer_wrapper(self, tokenizer):
         """
@@ -335,106 +233,23 @@ class ClassifierRewardModel:
         return scores
 
 
-def run_inference(model_path, prompts=None, responses=None):
-    """
-    Run inference with the classifier reward model
-    """
-    # Load the model
+# Example usage
+if __name__ == "__main__":
+    model_path = (
+        "s3://mybucket-jenny-test/rlhf-checkpoints/reg-rm/hf/huggingface/ba125/"
+    )
     reward_model = ClassifierRewardModel(model_path)
 
-    # If no prompts/responses provided, use test examples
-    if prompts is None or responses is None:
-        prompts = [
-            "What is the capital of France?",
-            "Explain how a transformer model works.",
-        ]
-        responses = [
-            "The capital of France is Paris.",
-            "A transformer model is a neural network architecture that uses self-attention mechanisms to process sequential data.",
-        ]
+    # Example prompt-response pairs
+    prompts = [
+        "What is the capital of France?",
+        "Explain how a transformer model works.",
+    ]
+    responses = [
+        "The capital of France is Paris.",
+        "A transformer model is a neural network architecture that uses self-attention mechanisms to process sequential data.",
+    ]
 
     # Get reward scores
     scores = reward_model.get_reward(prompts, responses)
-
-    # Print results
-    for i, (prompt, response, score) in enumerate(zip(prompts, responses, scores)):
-        print(f"\nExample {i+1}:")
-        print(f"Prompt: {prompt}")
-        print(f"Response: {response}")
-        print(f"Score: {score.item():.2f}")
-
-    return scores
-
-
-def main():
-    """
-    Main entry point with command line argument parsing
-    """
-    parser = argparse.ArgumentParser(
-        description="Run inference with a classifier reward model"
-    )
-    parser.add_argument(
-        "--model_path",
-        type=str,
-        default="s3://mybucket-jenny-test/rlhf-checkpoints/reg-rm/hf/huggingface/ba125/",
-        help="Path to the reward model (local or S3)",
-    )
-    parser.add_argument(
-        "--prompt", type=str, default=None, help="Optional single prompt to evaluate"
-    )
-    parser.add_argument(
-        "--response",
-        type=str,
-        default=None,
-        help="Optional single response to evaluate",
-    )
-    parser.add_argument(
-        "--local_model_path",
-        type=str,
-        default=None,
-        help="Alternative local path to model if S3 fails",
-    )
-    parser.add_argument(
-        "--aws_access_key", type=str, default=None, help="AWS access key for S3 access"
-    )
-    parser.add_argument(
-        "--aws_secret_key", type=str, default=None, help="AWS secret key for S3 access"
-    )
-    parser.add_argument(
-        "--hf_token",
-        type=str,
-        default=None,
-        help="HuggingFace token for accessing models",
-    )
-
-    args = parser.parse_args()
-
-    # Set AWS credentials if provided
-    if args.aws_access_key and args.aws_secret_key:
-        os.environ["AWS_ACCESS_KEY_ID"] = args.aws_access_key
-        os.environ["AWS_SECRET_ACCESS_KEY"] = args.aws_secret_key
-        logger.info("Using provided AWS credentials")
-
-    # Set HF token if provided
-    if args.hf_token:
-        os.environ["HF_TOKEN"] = args.hf_token
-
-    # Use local path as fallback if S3 fails
-    model_path = args.model_path
-    try:
-        prompts = [args.prompt] if args.prompt else None
-        responses = [args.response] if args.response else None
-
-        run_inference(model_path, prompts, responses)
-    except Exception as e:
-        logger.error(f"Error using primary model path: {e}")
-        if args.local_model_path:
-            logger.info(f"Falling back to local model path: {args.local_model_path}")
-            run_inference(args.local_model_path, prompts, responses)
-        else:
-            logger.error("No fallback path provided. Exiting.")
-            raise
-
-
-if __name__ == "__main__":
-    main()
+    print(f"Reward scores: {scores}")
