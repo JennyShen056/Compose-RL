@@ -165,7 +165,7 @@ def main():
 
     # Load the dataset
     logger.info("Loading Helpfulness dataset...")
-    dataset = load_dataset("Jennny/Helpfulness", split="validation")
+    dataset = load_dataset("Jennny/Helpfulness", split="test", use_auth_token=True)
     logger.info(f"Loaded dataset with {len(dataset)} examples")
     logger.info(f"Dataset features: {dataset.features}")
     logger.info(f"Dataset columns: {dataset.column_names}")
