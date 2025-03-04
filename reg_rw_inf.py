@@ -180,6 +180,7 @@ def main():
     # Load the dataset
     logger.info("Loading Helpfulness dataset...")
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
+    dataset = dataset[:10]
     logger.info(f"Loaded {len(dataset)} test examples")
 
     # Prepare for inference
