@@ -1,27 +1,28 @@
-"""Inference model for loading and using the ClassifierRewardModel trained with ComposeRL."""
+"""Inference module for loading and using the ClassifierRewardModel trained with ComposeRL."""
 
 import os
-import json
 import logging
-from typing import Dict, Optional, Union, List, Any
+from typing import Dict, Optional, Union, List, Any, Mapping, MutableMapping
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
-# Import the necessary ComposeRL classes
+# Import the required compose_rl modules
 from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
-from compose_rl.reward_learning.hf_utils import RewardModelConfig
+from compose_rl.reward_learning.hf_utils import (
+    RewardModelConfig,
+    SequenceClassifierOutput,
+)
 from compose_rl.reward_learning.base_reward import RewardModel
 
 logger = logging.getLogger(__name__)
 
 
-class ClassifierRewardInference:
+class ClassifierRewardModel:
     """
-    Wrapper class for loading and using a trained ClassifierRewardModel from ComposeRL
-    for inference.
+    A wrapper class for loading and using a trained ComposerHFClassifierRewardModel for inference.
     """
 
     def __init__(
@@ -68,31 +69,61 @@ class ClassifierRewardInference:
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-        # Load the configuration
-        config_path = os.path.join(model_path, "config.json")
-        with open(config_path, "r") as f:
-            config_dict = json.load(f)
+        # Load the model using the ComposeRL framework
+        logger.info(f"Loading model from {model_path}")
 
-        # Create RewardModelConfig instance
-        config = RewardModelConfig(**config_dict)
+        # Create a tokenizer wrapper that matches what ComposeRL expects
+        tokenizer_wrapper = self._create_tokenizer_wrapper(self.tokenizer)
 
-        # Determine number of labels from config
-        self.num_labels = getattr(config, "num_labels", 5)  # Default to 5 for 0-4 range
-        logger.info(f"Loaded classifier model with {self.num_labels} labels")
-
-        # Create model instance
+        # Initialize the model with the ComposeRL class
         self.model = ComposerHFClassifierRewardModel(
-            tokenizer=self.tokenizer,
             pretrained_model_name_or_path=model_path,
-            loss_type="bce",  # From your config
-            config_overrides={"num_labels": self.num_labels},
+            tokenizer=tokenizer_wrapper,
+            use_train_metrics=False,
+            loss_type="bce",
+            return_last=True,
+            return_lm_logits=False,
         )
 
-        # Move model to correct device
-        if torch_dtype:
-            self.model.to(dtype=torch_dtype)
-        self.model.to(device)
-        self.model.eval()
+        # Move model to device and set to evaluation mode
+        if hasattr(self.model, "model"):
+            self.model.model.to(device=self.device, dtype=self.torch_dtype)
+            self.model.model.eval()
+        else:
+            self.model.to(device=self.device, dtype=self.torch_dtype)
+            self.model.eval()
+
+        # Get number of labels
+        if hasattr(self.model, "model") and hasattr(self.model.model, "config"):
+            self.num_labels = getattr(self.model.model.config, "num_labels", 5)
+        else:
+            self.num_labels = 5  # Default to 5 for 0-4 range
+
+        logger.info(f"Loaded classifier model with {self.num_labels} labels")
+
+    def _create_tokenizer_wrapper(self, tokenizer):
+        """
+        Create a tokenizer wrapper that matches the expected interface for ComposeRL.
+        This adapts the HF tokenizer to the interface expected by the ComposeRL framework.
+        """
+
+        class TokenizerWrapper:
+            def __init__(self, tokenizer):
+                self.tokenizer = tokenizer
+                for attr in dir(tokenizer):
+                    if not attr.startswith("_") and not hasattr(self, attr):
+                        setattr(self, attr, getattr(tokenizer, attr))
+
+            def encode_plus(self, *args, **kwargs):
+                return self.tokenizer.encode_plus(*args, **kwargs)
+
+            def batch_encode_plus(self, *args, **kwargs):
+                return self.tokenizer.batch_encode_plus(*args, **kwargs)
+
+            def __call__(self, *args, **kwargs):
+                return self.tokenizer(*args, **kwargs)
+
+        return TokenizerWrapper(tokenizer)
 
     def get_reward(
         self, prompts: Union[str, List[str]], responses: Union[str, List[str]], **kwargs
@@ -136,30 +167,27 @@ class ClassifierRewardInference:
         # Move inputs to the correct device
         tokenized_inputs = {k: v.to(self.device) for k, v in tokenized_inputs.items()}
 
-        # Add is_inference flag for model's forward method
-        tokenized_inputs["is_inference"] = True
+        # Add is_inference flag for the model's forward method
+        batch = {**tokenized_inputs, "is_inference": True}
 
-        # Get model outputs
+        # Get model outputs using the model's forward method
         with torch.no_grad():
-            # Use model's forward method which handles the custom reward model format
-            outputs = self.model.forward(tokenized_inputs)
+            scores = self.model.forward(batch)
 
         # Process scores based on model output type
-        if self.num_labels == 1:
-            # Regression model (direct score)
-            scores = outputs.view(-1)
-        else:
-            # Classification model
-            # We need to check if outputs is already post-processed or needs softmax
-            if isinstance(outputs, torch.Tensor) and outputs.dim() > 1:
-                probs = F.softmax(outputs, dim=1)
-                class_values = torch.arange(
-                    0, self.num_labels, device=self.device, dtype=torch.float
-                )
-                scores = torch.sum(probs * class_values.unsqueeze(0), dim=1)
-            else:
-                # Outputs might already be processed
-                scores = outputs.view(-1)
+        if isinstance(scores, dict) and "scores" in scores:
+            scores = scores["scores"]
+
+        if scores.dim() > 1 and scores.shape[1] > 1:
+            # Classification model - compute expected value
+            probs = F.softmax(scores, dim=1)
+            class_values = torch.arange(
+                0, scores.shape[1], device=self.device, dtype=scores.dtype
+            )
+            scores = torch.sum(probs * class_values.unsqueeze(0), dim=1)
+        elif scores.dim() > 1:
+            # Single label but in 2D format
+            scores = scores.squeeze(1)
 
         return scores
 
@@ -180,39 +208,37 @@ class ClassifierRewardInference:
             if k in ["input_ids", "attention_mask"]
         }
 
-        # Add is_inference flag for model's forward method
+        # Add is_inference flag
         batch["is_inference"] = True
 
         # Get model outputs
         with torch.no_grad():
-            # Use the model's forward method which is designed for the custom reward model
-            outputs = self.model.forward(batch)
+            scores = self.model.forward(batch)
 
         # Process scores based on model output type
-        if self.num_labels == 1:
-            # Regression model (direct score)
-            scores = outputs.view(-1)
-        else:
-            # Classification model
-            if isinstance(outputs, torch.Tensor) and outputs.dim() > 1:
-                probs = F.softmax(outputs, dim=1)
-                class_values = torch.arange(
-                    0, self.num_labels, device=self.device, dtype=torch.float
-                )
-                scores = torch.sum(probs * class_values.unsqueeze(0), dim=1)
-            else:
-                # Outputs might already be processed
-                scores = outputs.view(-1)
+        if isinstance(scores, dict) and "scores" in scores:
+            scores = scores["scores"]
+
+        if scores.dim() > 1 and scores.shape[1] > 1:
+            # Classification model - compute expected value
+            probs = F.softmax(scores, dim=1)
+            class_values = torch.arange(
+                0, scores.shape[1], device=self.device, dtype=scores.dtype
+            )
+            scores = torch.sum(probs * class_values.unsqueeze(0), dim=1)
+        elif scores.dim() > 1:
+            # Single label but in 2D format
+            scores = scores.squeeze(1)
 
         return scores
 
 
-# Example of usage in your reg_rw_inf.py or another script
-def main():
+# Example usage
+if __name__ == "__main__":
     model_path = (
         "s3://mybucket-jenny-test/rlhf-checkpoints/reg-rm/hf/huggingface/ba125/"
     )
-    reward_model = ClassifierRewardInference(model_path)
+    reward_model = ClassifierRewardModel(model_path)
 
     # Example prompt-response pairs
     prompts = [
@@ -227,7 +253,3 @@ def main():
     # Get reward scores
     scores = reward_model.get_reward(prompts, responses)
     print(f"Reward scores: {scores}")
-
-
-if __name__ == "__main__":
-    main()
