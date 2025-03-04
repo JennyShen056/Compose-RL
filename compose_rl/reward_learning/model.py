@@ -242,3 +242,13 @@ class ComposerHFClassifierRewardModel(
             batch,
             self.loss_type,
         )
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        # First, call the parent's from_pretrained method to load the base model.
+        base_model = super(ComposerHFClassifierRewardModel, cls).from_pretrained(
+            pretrained_model_name_or_path, *args, **kwargs
+        )
+        # Change the instance's class to the custom one.
+        base_model.__class__ = cls
+        return base_model
