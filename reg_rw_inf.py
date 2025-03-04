@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 
 # Import your custom reward model class.
 # Make sure that the module path here matches where ComposerHFClassifierRewardModel is defined.
-from compose_rl.reward_learning.modeling_hf import ComposerHFClassifierRewardModel
+from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
 
 # Set up logging
 logging.basicConfig(
