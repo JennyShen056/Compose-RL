@@ -9,13 +9,11 @@ import torch.nn as nn
 from torch.nn import functional as F
 from transformers import AutoTokenizer, PreTrainedTokenizer
 
-# Import the required compose_rl modules
-from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
-from compose_rl.reward_learning.hf_utils import (
-    RewardModelConfig,
-    SequenceClassifierOutput,
-)
-from compose_rl.reward_learning.base_reward import RewardModel
+# Import the required modules directly from the current directory
+# since we're already in the compose_rl/reward_learning directory
+from model import ComposerHFClassifierRewardModel
+from hf_utils import RewardModelConfig, SequenceClassifierOutput
+from base_reward import RewardModel
 
 logger = logging.getLogger(__name__)
 
@@ -231,25 +229,3 @@ class ClassifierRewardModel:
             scores = scores.squeeze(1)
 
         return scores
-
-
-# Example usage
-if __name__ == "__main__":
-    model_path = (
-        "s3://mybucket-jenny-test/rlhf-checkpoints/reg-rm/hf/huggingface/ba125/"
-    )
-    reward_model = ClassifierRewardModel(model_path)
-
-    # Example prompt-response pairs
-    prompts = [
-        "What is the capital of France?",
-        "Explain how a transformer model works.",
-    ]
-    responses = [
-        "The capital of France is Paris.",
-        "A transformer model is a neural network architecture that uses self-attention mechanisms to process sequential data.",
-    ]
-
-    # Get reward scores
-    scores = reward_model.get_reward(prompts, responses)
-    print(f"Reward scores: {scores}")
