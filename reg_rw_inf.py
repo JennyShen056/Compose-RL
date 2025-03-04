@@ -154,19 +154,21 @@ def main():
     model.to(device)
     model.eval()
 
-    # Load the dataset
+    # Load the dataset - correctly specifying "test" split and auth token
     logger.info("Loading Helpfulness dataset...")
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
-    dataset = dataset[:10]
-    logger.info(f"Loaded {len(dataset)} test examples")
+    logger.info(f"Loaded dataset with {len(dataset)} examples")
 
-    # Let's examine the dataset structure first
-    first_item = dataset[0]
-    logger.info(f"Dataset item structure: {type(first_item)}")
-    logger.info(
-        f"Dataset item keys: {first_item.keys() if hasattr(first_item, 'keys') else 'N/A'}"
-    )
-    logger.info(f"First dataset item: {first_item}")
+    # Examine the dataset structure
+    logger.info(f"Dataset features: {dataset.features}")
+    logger.info(f"Dataset columns: {dataset.column_names}")
+
+    # Print a sample to understand format
+    sample_idx = 0
+    if len(dataset) > 0:
+        logger.info(f"Sample item ({sample_idx}):")
+        for col in dataset.column_names:
+            logger.info(f"  {col}: {dataset[sample_idx][col]}")
 
     # Prepare for inference
     predictions = []
@@ -176,29 +178,25 @@ def main():
     logger.info("Starting inference...")
     for i, example in enumerate(tqdm(dataset)):
         try:
-            # Extract conversation and parse if needed
-            if isinstance(example, dict) and "text" in example:
-                conversation = example["text"]
+            # Get the conversation from the 'text' field
+            conversation_data = example["text"]
 
-                # If the conversation is a string, try to parse it as JSON
-                if isinstance(conversation, str):
-                    try:
-                        conversation = json.loads(conversation)
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            f"Failed to parse conversation as JSON: {conversation[:50]}..."
-                        )
-                        continue
-
-                # Use tokenizer's chat template to format the conversation
-                messages = conversation
-                formatted_text = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=False
-                )
+            # If it's a string, parse it as JSON
+            if isinstance(conversation_data, str):
+                try:
+                    conversation_messages = json.loads(conversation_data)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Failed to parse conversation as JSON: {conversation_data[:100]}..."
+                    )
+                    continue
             else:
-                # If the structure is not what we expect, log and skip
-                logger.warning(f"Unexpected dataset structure: {example}")
-                continue
+                conversation_messages = conversation_data
+
+            # Format using the tokenizer's chat template
+            formatted_text = tokenizer.apply_chat_template(
+                conversation_messages, tokenize=False, add_generation_prompt=False
+            )
 
             # Tokenize
             inputs = tokenizer(
@@ -216,28 +214,28 @@ def main():
                 predictions.append(predicted_class)
 
                 # Store ground truth
-                if isinstance(example, dict) and "labels" in example:
-                    ground_truth.append(example["labels"])
-                else:
-                    logger.warning(f"No labels found in example: {example}")
-                    continue
+                ground_truth.append(example["labels"])
 
-            # Print some examples
-            if i < 5:  # Print first 5 examples
+            # Print examples for debugging
+            if i < 5:
                 logger.info(f"\nExample {i+1}:")
-                logger.info(f"Input: {formatted_text[:100]}...")
-                logger.info(
-                    f"True label: {example['labels'] if isinstance(example, dict) and 'labels' in example else 'N/A'}"
-                )
+                logger.info(f"Conversation: {conversation_messages}")
+                logger.info(f"Formatted input: {formatted_text[:200]}...")
+                logger.info(f"True label: {example['labels']}")
                 logger.info(f"Predicted: {predicted_class}")
 
-                # Print all logits
+                # Print logits and probabilities
                 probs = torch.softmax(logits, dim=-1)[0].cpu().numpy()
+                logger.info("Class probabilities:")
                 for cls_idx, prob in enumerate(probs):
-                    logger.info(f"Class {cls_idx}: {prob:.4f}")
+                    logger.info(f"  Class {cls_idx}: {prob:.4f}")
 
         except Exception as e:
             logger.error(f"Error processing example {i}: {e}")
+            logger.error(f"Example data: {example}")
+            import traceback
+
+            logger.error(traceback.format_exc())
             continue
 
     # Calculate metrics
@@ -271,9 +269,7 @@ def main():
 
         logger.info(f"Predictions saved to {output_file}")
     else:
-        logger.error(
-            "No valid predictions collected. Check the dataset format and processing."
-        )
+        logger.error("No valid predictions collected.")
 
 
 if __name__ == "__main__":
