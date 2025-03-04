@@ -178,9 +178,6 @@ class ComposerMPTPairwiseRewardModel(ComposerMPTCausalLM, RewardModel):
         )
 
 
-from transformers import AutoModelForSequenceClassification
-
-
 class ComposerHFClassifierRewardModel(
     ComposerHFSequenceClassification,
     RewardModel,
@@ -201,6 +198,10 @@ class ComposerHFClassifierRewardModel(
         self.return_lm_logits = return_lm_logits
         self.return_last = return_last
 
+        # config_overrides = {
+        #     "return_logits": return_lm_logits,
+        # }
+
         config_overrides = {
             "num_labels": 5,  # For 0-4 range
             "return_logits": return_lm_logits,
@@ -214,6 +215,17 @@ class ComposerHFClassifierRewardModel(
             config_overrides=config_overrides,
             **kwargs,
         )
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
+        # Delegate loading to the parent's from_pretrained method.
+        # Assuming ComposerHFSequenceClassification (or another parent) implements it.
+        model = ComposerHFSequenceClassification.from_pretrained(
+            pretrained_model_name_or_path, **kwargs
+        )
+        # Change the instance's class to our custom class.
+        model.__class__ = cls
+        return model
 
     def forward(self, batch: MutableMapping) -> dict[str, torch.Tensor]:
         ret_val = classifier_forward(
@@ -241,12 +253,29 @@ class ComposerHFClassifierRewardModel(
             self.loss_type,
         )
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        # Call the from_pretrained method from AutoModelForSequenceClassification
-        base_model = AutoModelForSequenceClassification.from_pretrained(
-            pretrained_model_name_or_path, *args, **kwargs
-        )
-        # Recast the model into our custom class
-        base_model.__class__ = cls
-        return base_model
+    # def forward(self, batch: MutableMapping) -> dict[str, torch.Tensor]:
+    #     ret_val = classifier_forward(
+    #         model=self.model,
+    #         tokenizer=self.tokenizer,
+    #         batch=batch,
+    #         return_last=self.return_last,
+    #         return_lm_logits=self.return_lm_logits,
+    #     )
+
+    #     return ret_val
+
+    # def eval_forward(
+    #     self,
+    #     batch: MutableMapping,
+    #     outputs: Optional[SequenceClassifierOutput] = None,
+    # ) -> dict[str, torch.Tensor]:
+    #     return outputs if outputs is not None else self.forward(batch)
+
+    # def loss(
+    #     self, outputs: SequenceClassifierOutput, batch: Mapping
+    # ) -> dict[str, torch.Tensor]:
+    #     return classifier_loss(
+    #         outputs,
+    #         batch,
+    #         self.loss_type,
+    #     )
