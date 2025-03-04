@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Classifier Reward Model Inference Script
+Classifier Reward Model Inference Script with improved S3 handling
 """
 
 import os
@@ -48,6 +48,77 @@ except ImportError as e:
     from model import ComposerHFClassifierRewardModel
 
 
+def find_model_in_s3(s3_path):
+    """
+    Explore S3 path to find the actual model path
+    """
+    try:
+        import boto3
+        from urllib.parse import urlparse
+
+        # Parse the S3 URI
+        parsed_url = urlparse(s3_path)
+        bucket_name = parsed_url.netloc
+        prefix = parsed_url.path.lstrip("/")
+
+        # Initialize S3 client
+        s3_client = boto3.client("s3")
+        logger.info(f"Exploring S3 bucket: {bucket_name}, prefix: {prefix}")
+
+        # If prefix ends with a slash, it's likely a directory
+        if prefix.endswith("/"):
+            prefix = prefix.rstrip("/")
+
+        # Paths to explore
+        paths_to_check = [
+            prefix,  # Original path
+            f"{prefix}/",  # Original path as directory
+            f"{prefix}ba125/",  # Specific subfolder mentioned in error
+            "rlhf-checkpoints/reg-rm/hf/latest/",  # Common pattern
+            "rlhf-checkpoints/reg-rm/latest/",  # Another common pattern
+        ]
+
+        # Check for HF model files in each path
+        for path in paths_to_check:
+            logger.info(f"Checking path: {path}")
+
+            # Check for model files
+            model_files = ["config.json", "pytorch_model.bin", "model.safetensors"]
+            for file in model_files:
+                try:
+                    file_key = f"{path}{file}"
+                    s3_client.head_object(Bucket=bucket_name, Key=file_key)
+                    logger.info(f"Found model file: {file} at {path}")
+                    return f"s3://{bucket_name}/{path}"
+                except Exception as e:
+                    # File not found at this path, try next file or path
+                    pass
+
+            # Check if the path exists as a directory containing files
+            try:
+                response = s3_client.list_objects_v2(
+                    Bucket=bucket_name, Prefix=path, Delimiter="/", MaxKeys=10
+                )
+
+                if "Contents" in response:
+                    logger.info(f"Found directory at: {path}")
+                    # Look for model files
+                    for obj in response["Contents"]:
+                        file_name = os.path.basename(obj["Key"])
+                        if file_name in model_files:
+                            logger.info(f"Found model file: {file_name} at {path}")
+                            return f"s3://{bucket_name}/{path}"
+            except Exception as e:
+                logger.error(f"Error listing objects at {path}: {e}")
+
+        logger.warning(f"Could not find model files in any of the expected paths")
+        return s3_path  # Return original path if nothing found
+
+    except Exception as e:
+        logger.error(f"Error exploring S3: {e}")
+        return s3_path
+
+
 class ClassifierRewardModel:
     """
     A wrapper class for loading and using a trained ComposerHFClassifierRewardModel for inference.
@@ -70,63 +141,67 @@ class ClassifierRewardModel:
         self.device = device
         self.torch_dtype = torch_dtype
 
-        # Handle S3 paths by downloading to a temp location if needed
+        # If path is S3, try to find the actual model files
         if model_path.startswith("s3://"):
             try:
-                import boto3
-                from urllib.parse import urlparse
+                # First, try to explore S3 to find the model
+                model_path = find_model_in_s3(model_path)
+                logger.info(f"Using model path: {model_path}")
 
-                parsed_url = urlparse(model_path)
-                bucket_name = parsed_url.netloc
-                key = parsed_url.path.lstrip("/")
-
-                s3_client = boto3.client("s3")
-                local_path = os.path.join("/tmp", os.path.basename(key))
-                os.makedirs(os.path.dirname(local_path), exist_ok=True)
-
-                logger.info(f"Downloading model from {model_path} to {local_path}")
-                s3_client.download_file(bucket_name, key, local_path)
-                model_path = local_path
-            except ImportError:
-                raise ImportError(
-                    "boto3 is required for loading from S3. Install with: pip install boto3"
-                )
+                # Now try to load directly from the path
+                logger.info("Attempting to load directly from S3 path")
             except Exception as e:
-                raise RuntimeError(f"Failed to download model from S3: {e}")
+                logger.warning(f"Error exploring S3: {e}")
 
-        # Load tokenizer
-        logger.info(f"Loading tokenizer from {model_path}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        # Try to load the model with various approaches
+        # First, try loading the tokenizer
+        try:
+            logger.info(f"Loading tokenizer from {model_path}")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                trust_remote_code=True,
+                use_auth_token=os.environ.get("HF_TOKEN"),
+            )
+            logger.info(
+                f"Successfully loaded tokenizer: {self.tokenizer.__class__.__name__}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to load tokenizer: {e}")
+            # Try a default tokenizer as fallback
+            try:
+                logger.info(
+                    "Falling back to meta-llama/Meta-Llama-3.1-8B-Instruct tokenizer"
+                )
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    "meta-llama/Meta-Llama-3.1-8B-Instruct",
+                    trust_remote_code=True,
+                    use_auth_token=os.environ.get("HF_TOKEN"),
+                )
+            except Exception as e2:
+                logger.error(f"Failed to load fallback tokenizer: {e2}")
+                raise RuntimeError("Could not load any tokenizer")
 
         # Create a tokenizer wrapper that matches what ComposeRL expects
         tokenizer_wrapper = self._create_tokenizer_wrapper(self.tokenizer)
 
         # Initialize the model with the ComposeRL class
-        logger.info(f"Loading model from {model_path}")
-        self.model = ComposerHFClassifierRewardModel(
-            pretrained_model_name_or_path=model_path,
-            tokenizer=tokenizer_wrapper,
-            use_train_metrics=False,
-            loss_type="bce",
-            return_last=True,
-            return_lm_logits=False,
-        )
-
-        # Move model to device and set to evaluation mode
-        if hasattr(self.model, "model"):
-            self.model.model.to(device=self.device, dtype=self.torch_dtype)
-            self.model.model.eval()
-        else:
-            self.model.to(device=self.device, dtype=self.torch_dtype)
-            self.model.eval()
-
-        # Get number of labels
-        if hasattr(self.model, "model") and hasattr(self.model.model, "config"):
-            self.num_labels = getattr(self.model.model.config, "num_labels", 5)
-        else:
-            self.num_labels = 5  # Default to 5 for 0-4 range
-
-        logger.info(f"Loaded classifier model with {self.num_labels} labels")
+        try:
+            logger.info(f"Loading model from {model_path}")
+            # Add extra parameters to handle various loading scenarios
+            self.model = ComposerHFClassifierRewardModel(
+                pretrained_model_name_or_path=model_path,
+                tokenizer=tokenizer_wrapper,
+                use_train_metrics=False,
+                loss_type="bce",
+                return_last=True,
+                return_lm_logits=False,
+                use_auth_token=os.environ.get("HF_TOKEN"),  # Use HF token if available
+                trust_remote_code=True,
+            )
+            logger.info("Successfully loaded model")
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            raise
 
     def _create_tokenizer_wrapper(self, tokenizer):
         """
@@ -313,13 +388,52 @@ def main():
         default=None,
         help="Optional single response to evaluate",
     )
+    parser.add_argument(
+        "--local_model_path",
+        type=str,
+        default=None,
+        help="Alternative local path to model if S3 fails",
+    )
+    parser.add_argument(
+        "--aws_access_key", type=str, default=None, help="AWS access key for S3 access"
+    )
+    parser.add_argument(
+        "--aws_secret_key", type=str, default=None, help="AWS secret key for S3 access"
+    )
+    parser.add_argument(
+        "--hf_token",
+        type=str,
+        default=None,
+        help="HuggingFace token for accessing models",
+    )
 
     args = parser.parse_args()
 
-    prompts = [args.prompt] if args.prompt else None
-    responses = [args.response] if args.response else None
+    # Set AWS credentials if provided
+    if args.aws_access_key and args.aws_secret_key:
+        os.environ["AWS_ACCESS_KEY_ID"] = args.aws_access_key
+        os.environ["AWS_SECRET_ACCESS_KEY"] = args.aws_secret_key
+        logger.info("Using provided AWS credentials")
 
-    run_inference(args.model_path, prompts, responses)
+    # Set HF token if provided
+    if args.hf_token:
+        os.environ["HF_TOKEN"] = args.hf_token
+
+    # Use local path as fallback if S3 fails
+    model_path = args.model_path
+    try:
+        prompts = [args.prompt] if args.prompt else None
+        responses = [args.response] if args.response else None
+
+        run_inference(model_path, prompts, responses)
+    except Exception as e:
+        logger.error(f"Error using primary model path: {e}")
+        if args.local_model_path:
+            logger.info(f"Falling back to local model path: {args.local_model_path}")
+            run_inference(args.local_model_path, prompts, responses)
+        else:
+            logger.error("No fallback path provided. Exiting.")
+            raise
 
 
 if __name__ == "__main__":
