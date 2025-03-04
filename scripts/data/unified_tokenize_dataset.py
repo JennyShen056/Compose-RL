@@ -230,8 +230,8 @@ def main(
             print("Converting to MDS format")
 
             for i, sample in enumerate(dataset):
-                if i == 1000:
-                    break
+                # if i == 1000:
+                #     break
                 num_written += 1
                 out.write(sample)
 
