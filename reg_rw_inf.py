@@ -4,7 +4,7 @@ import torch
 import logging
 import json
 import numpy as np
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
 from datasets import load_dataset
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, mean_absolute_error, classification_report
@@ -54,7 +54,7 @@ def download_from_s3(bucket_name, s3_prefix, local_dir):
                 logger.info(f"Downloading {key} to {local_file_path}")
                 s3_client.download_file(bucket_name, key, local_file_path)
 
-        logger.info(f"Download complete")
+        logger.info("Download complete")
 
         # Verify downloaded files
         if os.path.exists(local_dir):
@@ -95,28 +95,44 @@ def main():
     # Load tokenizer
     logger.info("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
-        "meta-llama/Meta-Llama-3.1-8B-Instruct", token=os.environ["HF_TOKEN"]
+        "meta-llama/Meta-Llama-3.1-8B-Instruct", use_auth_token=os.environ["HF_TOKEN"]
     )
 
-    # Simply try to load the model with AutoModelForSequenceClassification
+    # First try to load the configuration from the local checkpoint
     try:
-        logger.info(f"Loading model from {local_model_dir}")
+        logger.info("Loading model configuration from checkpoint...")
+        config = AutoConfig.from_pretrained(
+            local_model_dir,
+            trust_remote_code=True,
+            use_auth_token=os.environ["HF_TOKEN"],
+        )
+        logger.info("Configuration loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading configuration: {e}")
+        return
+
+    # Now try to load the model with the custom configuration
+    try:
+        logger.info(f"Loading model from {local_model_dir} with custom config")
         model = AutoModelForSequenceClassification.from_pretrained(
-            local_model_dir, trust_remote_code=True, token=os.environ["HF_TOKEN"]
+            local_model_dir,
+            config=config,
+            trust_remote_code=True,
+            use_auth_token=os.environ["HF_TOKEN"],
         )
         logger.info("Model loaded successfully")
     except Exception as e:
-        # If direct loading fails, try initializing with base model and num_labels=5
         logger.warning(f"Error loading model directly: {e}")
         logger.info("Trying to load base model and then load classifier head...")
 
         try:
-            # Initialize with base model
+            # Initialize with base model (using the configuration from the checkpoint)
             model = AutoModelForSequenceClassification.from_pretrained(
                 "meta-llama/Meta-Llama-3.1-8B-Instruct",
+                config=config,
                 num_labels=5,
                 trust_remote_code=True,
-                token=os.environ["HF_TOKEN"],
+                use_auth_token=os.environ["HF_TOKEN"],
             )
 
             # Look for state dict files
@@ -127,18 +143,19 @@ def main():
             ]
 
             if state_dict_files:
-                # Try to load state dict
+                # Try to load state dict from one of the shard files
                 for file in state_dict_files:
                     try:
                         logger.info(f"Attempting to load state dict from {file}")
+                        file_path = os.path.join(local_model_dir, file)
                         if file.endswith(".safetensors"):
                             from safetensors.torch import load_file
 
-                            state_dict = load_file(os.path.join(local_model_dir, file))
+                            state_dict = load_file(file_path)
                         else:
-                            state_dict = torch.load(os.path.join(local_model_dir, file))
+                            state_dict = torch.load(file_path)
 
-                        # Try to load
+                        # Try to load state dict into the model (non-strict to ignore LM head differences)
                         model.load_state_dict(state_dict, strict=False)
                         logger.info(f"Successfully loaded state dict from {file}")
                         break
@@ -154,7 +171,7 @@ def main():
     model.to(device)
     model.eval()
 
-    # Load the dataset - correctly specifying "test" split and auth token
+    # Load the dataset - correctly specifying "validation" split and auth token
     logger.info("Loading Helpfulness dataset...")
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
     logger.info(f"Loaded dataset with {len(dataset)} examples")
@@ -198,7 +215,7 @@ def main():
                 conversation_messages, tokenize=False, add_generation_prompt=False
             )
 
-            # Tokenize
+            # Tokenize (ensure max_length is appropriate for your model)
             inputs = tokenizer(
                 formatted_text, return_tensors="pt", truncation=True, max_length=4096
             )
