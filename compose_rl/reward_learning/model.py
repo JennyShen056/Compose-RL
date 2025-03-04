@@ -178,6 +178,9 @@ class ComposerMPTPairwiseRewardModel(ComposerMPTCausalLM, RewardModel):
         )
 
 
+from transformers import AutoModelForSequenceClassification
+
+
 class ComposerHFClassifierRewardModel(
     ComposerHFSequenceClassification,
     RewardModel,
@@ -240,10 +243,10 @@ class ComposerHFClassifierRewardModel(
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        # Use the from_pretrained method from the parent class that implements it.
-        base_model = ComposerHFSequenceClassification.from_pretrained(
+        # Call the from_pretrained method from AutoModelForSequenceClassification
+        base_model = AutoModelForSequenceClassification.from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
-        # Recast the loaded model to our custom class.
+        # Recast the model into our custom class
         base_model.__class__ = cls
         return base_model
