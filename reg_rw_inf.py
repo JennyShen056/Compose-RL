@@ -4,12 +4,16 @@ import torch
 import logging
 import json
 import numpy as np
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
+from transformers import AutoTokenizer, AutoConfig
 from datasets import load_dataset
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, mean_absolute_error, classification_report
 import boto3
 from botocore.exceptions import ClientError
+
+# Import your custom reward model class.
+# Make sure that the module path here matches where ComposerHFClassifierRewardModel is defined.
+from compose_rl.reward_learning.modeling_hf import ComposerHFClassifierRewardModel
 
 # Set up logging
 logging.basicConfig(
@@ -32,31 +36,19 @@ def download_from_s3(bucket_name, s3_prefix, local_dir):
     try:
         # List objects in the S3 bucket with the given prefix
         paginator = s3_client.get_paginator("list_objects_v2")
-
         for page in paginator.paginate(Bucket=bucket_name, Prefix=s3_prefix):
             if "Contents" not in page:
                 continue
-
             for obj in page["Contents"]:
                 key = obj["Key"]
-
-                # Skip directories
                 if key.endswith("/"):
-                    continue
-
-                # Create local subdirectories if needed
+                    continue  # skip directories
                 rel_path = key[len(s3_prefix) :].lstrip("/")
                 local_file_path = os.path.join(local_dir, rel_path)
-
                 os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
-
-                # Download the file
                 logger.info(f"Downloading {key} to {local_file_path}")
                 s3_client.download_file(bucket_name, key, local_file_path)
-
         logger.info("Download complete")
-
-        # Verify downloaded files
         if os.path.exists(local_dir):
             files = os.listdir(local_dir)
             logger.info(f"Files in {local_dir}: {files}")
@@ -64,9 +56,7 @@ def download_from_s3(bucket_name, s3_prefix, local_dir):
                 logger.info("Found config.json - model download appears successful")
             else:
                 logger.warning("config.json not found - model might not be complete")
-
         return True
-
     except ClientError as e:
         logger.error(f"Error downloading from S3: {e}")
         return False
@@ -82,23 +72,21 @@ def main():
     s3_prefix = "rlhf-checkpoints/reg-rm/hf/huggingface/ba125/"
     local_model_dir = "/tmp/reward_model"
 
-    # First make sure the model is downloaded
+    # Download the model from S3
     download_success = download_from_s3(s3_bucket, s3_prefix, local_model_dir)
-
     if not download_success:
         logger.error("Failed to download model from S3. Exiting.")
         return
 
-    # Check what files we have
     logger.info(f"Files in model directory: {os.listdir(local_model_dir)}")
 
-    # Load tokenizer
+    # Load tokenizer (using your base model name and auth token)
     logger.info("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         "meta-llama/Meta-Llama-3.1-8B-Instruct", use_auth_token=os.environ["HF_TOKEN"]
     )
 
-    # First try to load the configuration from the local checkpoint
+    # Load configuration from the checkpoint so that your custom RewardModelConfig is used.
     try:
         logger.info("Loading model configuration from checkpoint...")
         config = AutoConfig.from_pretrained(
@@ -111,179 +99,111 @@ def main():
         logger.error(f"Error loading configuration: {e}")
         return
 
-    # Now try to load the model with the custom configuration
+    # Now load your custom classifier reward model using your custom class.
     try:
-        logger.info(f"Loading model from {local_model_dir} with custom config")
-        model = AutoModelForSequenceClassification.from_pretrained(
+        logger.info(f"Loading custom classifier reward model from {local_model_dir}...")
+        model = ComposerHFClassifierRewardModel.from_pretrained(
             local_model_dir,
             config=config,
             trust_remote_code=True,
             use_auth_token=os.environ["HF_TOKEN"],
         )
-        logger.info("Model loaded successfully")
+        logger.info("Custom reward model loaded successfully")
     except Exception as e:
-        logger.warning(f"Error loading model directly: {e}")
-        logger.info("Trying to load base model and then load classifier head...")
-
-        try:
-            # Initialize with base model (using the configuration from the checkpoint)
-            model = AutoModelForSequenceClassification.from_pretrained(
-                "meta-llama/Meta-Llama-3.1-8B-Instruct",
-                config=config,
-                num_labels=5,
-                trust_remote_code=True,
-                use_auth_token=os.environ["HF_TOKEN"],
-            )
-
-            # Look for state dict files
-            state_dict_files = [
-                f
-                for f in os.listdir(local_model_dir)
-                if f.endswith(".bin") or f.endswith(".pt") or f.endswith(".safetensors")
-            ]
-
-            if state_dict_files:
-                # Try to load state dict from one of the shard files
-                for file in state_dict_files:
-                    try:
-                        logger.info(f"Attempting to load state dict from {file}")
-                        file_path = os.path.join(local_model_dir, file)
-                        if file.endswith(".safetensors"):
-                            from safetensors.torch import load_file
-
-                            state_dict = load_file(file_path)
-                        else:
-                            state_dict = torch.load(file_path)
-
-                        # Try to load state dict into the model (non-strict to ignore LM head differences)
-                        model.load_state_dict(state_dict, strict=False)
-                        logger.info(f"Successfully loaded state dict from {file}")
-                        break
-                    except Exception as e2:
-                        logger.warning(f"Failed to load state dict from {file}: {e2}")
-            else:
-                logger.error("No state dict files found in model directory")
-                return
-        except Exception as e:
-            logger.error(f"Error initializing base model: {e}")
-            return
+        logger.error(f"Error loading custom reward model: {e}")
+        return
 
     model.to(device)
     model.eval()
 
-    # Load the dataset - correctly specifying "validation" split and auth token
+    # Load the dataset (using the validation split)
     logger.info("Loading Helpfulness dataset...")
     dataset = load_dataset("Jennny/Helpfulness", split="validation")
     logger.info(f"Loaded dataset with {len(dataset)} examples")
-
-    # Examine the dataset structure
     logger.info(f"Dataset features: {dataset.features}")
     logger.info(f"Dataset columns: {dataset.column_names}")
 
-    # Print a sample to understand format
-    sample_idx = 0
+    # Print a sample to inspect format
     if len(dataset) > 0:
+        sample_idx = 0
         logger.info(f"Sample item ({sample_idx}):")
         for col in dataset.column_names:
             logger.info(f"  {col}: {dataset[sample_idx][col]}")
 
-    # Prepare for inference
     predictions = []
     ground_truth = []
 
-    # Process each example
     logger.info("Starting inference...")
     for i, example in enumerate(tqdm(dataset)):
         try:
-            # Get the conversation from the 'text' field
             conversation_data = example["text"]
-
-            # If it's a string, parse it as JSON
+            # Parse JSON if necessary
             if isinstance(conversation_data, str):
                 try:
                     conversation_messages = json.loads(conversation_data)
                 except json.JSONDecodeError:
                     logger.warning(
-                        f"Failed to parse conversation as JSON: {conversation_data[:100]}..."
+                        f"Failed to parse conversation JSON: {conversation_data[:100]}..."
                     )
                     continue
             else:
                 conversation_messages = conversation_data
 
-            # Format using the tokenizer's chat template
+            # Format conversation using the tokenizer's chat template
             formatted_text = tokenizer.apply_chat_template(
                 conversation_messages, tokenize=False, add_generation_prompt=False
             )
-
-            # Tokenize (ensure max_length is appropriate for your model)
             inputs = tokenizer(
                 formatted_text, return_tensors="pt", truncation=True, max_length=4096
             )
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            # Inference
             with torch.no_grad():
                 outputs = model(**inputs)
                 logits = outputs.logits
-
-                # Get predicted class (0-4)
                 predicted_class = torch.argmax(logits, dim=-1).item()
                 predictions.append(predicted_class)
-
-                # Store ground truth
                 ground_truth.append(example["labels"])
 
-            # Print examples for debugging
             if i < 5:
                 logger.info(f"\nExample {i+1}:")
                 logger.info(f"Conversation: {conversation_messages}")
-                logger.info(f"Formatted input: {formatted_text[:200]}...")
+                logger.info(
+                    f"Formatted input (first 200 chars): {formatted_text[:200]}..."
+                )
                 logger.info(f"True label: {example['labels']}")
                 logger.info(f"Predicted: {predicted_class}")
-
-                # Print logits and probabilities
                 probs = torch.softmax(logits, dim=-1)[0].cpu().numpy()
                 logger.info("Class probabilities:")
                 for cls_idx, prob in enumerate(probs):
                     logger.info(f"  Class {cls_idx}: {prob:.4f}")
-
         except Exception as e:
             logger.error(f"Error processing example {i}: {e}")
-            logger.error(f"Example data: {example}")
             import traceback
 
             logger.error(traceback.format_exc())
             continue
 
-    # Calculate metrics
-    if len(predictions) > 0 and len(ground_truth) > 0:
+    if predictions and ground_truth:
         predictions = np.array(predictions)
         ground_truth = np.array(ground_truth)
-
         accuracy = accuracy_score(ground_truth, predictions)
         mae = mean_absolute_error(ground_truth, predictions)
-
         logger.info("\n===== Results =====")
         logger.info(f"Accuracy: {accuracy:.4f}")
         logger.info(f"Mean Absolute Error: {mae:.4f}")
         logger.info("\nClassification Report:")
         logger.info(classification_report(ground_truth, predictions))
-
-        # Calculate error distribution
         error_dist = np.abs(predictions - ground_truth)
-
         logger.info("\nError Distribution:")
         for i in range(5):
             pct = (error_dist == i).mean() * 100
             logger.info(f"Error = {i}: {pct:.2f}%")
-
-        # Save predictions to file
         output_file = "reward_model_predictions.csv"
         with open(output_file, "w") as f:
             f.write("true_label,predicted_label\n")
             for gt, pred in zip(ground_truth, predictions):
                 f.write(f"{gt},{pred}\n")
-
         logger.info(f"Predictions saved to {output_file}")
     else:
         logger.error("No valid predictions collected.")
