@@ -216,17 +216,6 @@ class ComposerHFClassifierRewardModel(
             **kwargs,
         )
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
-        # Delegate loading to the parent's from_pretrained method.
-        # Assuming ComposerHFSequenceClassification (or another parent) implements it.
-        model = ComposerHFSequenceClassification.from_pretrained(
-            pretrained_model_name_or_path, **kwargs
-        )
-        # Change the instance's class to our custom class.
-        model.__class__ = cls
-        return model
-
     def forward(self, batch: MutableMapping) -> dict[str, torch.Tensor]:
         ret_val = classifier_forward(
             model=self.model,
@@ -235,6 +224,7 @@ class ComposerHFClassifierRewardModel(
             return_last=self.return_last,
             return_lm_logits=self.return_lm_logits,
         )
+
         return ret_val
 
     def eval_forward(
@@ -252,30 +242,3 @@ class ComposerHFClassifierRewardModel(
             batch,
             self.loss_type,
         )
-
-    # def forward(self, batch: MutableMapping) -> dict[str, torch.Tensor]:
-    #     ret_val = classifier_forward(
-    #         model=self.model,
-    #         tokenizer=self.tokenizer,
-    #         batch=batch,
-    #         return_last=self.return_last,
-    #         return_lm_logits=self.return_lm_logits,
-    #     )
-
-    #     return ret_val
-
-    # def eval_forward(
-    #     self,
-    #     batch: MutableMapping,
-    #     outputs: Optional[SequenceClassifierOutput] = None,
-    # ) -> dict[str, torch.Tensor]:
-    #     return outputs if outputs is not None else self.forward(batch)
-
-    # def loss(
-    #     self, outputs: SequenceClassifierOutput, batch: Mapping
-    # ) -> dict[str, torch.Tensor]:
-    #     return classifier_loss(
-    #         outputs,
-    #         batch,
-    #         self.loss_type,
-    #     )
