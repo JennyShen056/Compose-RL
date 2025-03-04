@@ -198,10 +198,6 @@ class ComposerHFClassifierRewardModel(
         self.return_lm_logits = return_lm_logits
         self.return_last = return_last
 
-        # config_overrides = {
-        #     "return_logits": return_lm_logits,
-        # }
-
         config_overrides = {
             "num_labels": 5,  # For 0-4 range
             "return_logits": return_lm_logits,
@@ -224,7 +220,6 @@ class ComposerHFClassifierRewardModel(
             return_last=self.return_last,
             return_lm_logits=self.return_lm_logits,
         )
-
         return ret_val
 
     def eval_forward(
@@ -245,10 +240,10 @@ class ComposerHFClassifierRewardModel(
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        # First, call the parent's from_pretrained method to load the base model.
-        base_model = super(ComposerHFClassifierRewardModel, cls).from_pretrained(
+        # Use the from_pretrained method from the parent class that implements it.
+        base_model = ComposerHFSequenceClassification.from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
-        # Change the instance's class to the custom one.
+        # Recast the loaded model to our custom class.
         base_model.__class__ = cls
         return base_model
