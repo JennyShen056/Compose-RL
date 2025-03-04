@@ -72,29 +72,6 @@ def download_from_s3(bucket_name, s3_prefix, local_dir):
         return False
 
 
-def format_conversation(example):
-    """Format the conversation from the dataset into a prompt for the model"""
-    conversation = example["text"]
-
-    # Parse the conversation if it's a JSON string
-    if isinstance(conversation, str):
-        try:
-            # Try to parse as JSON
-            conversation = json.loads(conversation)
-        except json.JSONDecodeError:
-            # If not valid JSON, return as is
-            return conversation
-
-    # Create a formatted prompt
-    formatted_text = ""
-    for turn in conversation:
-        role = turn.get("role", "").capitalize()
-        content = turn.get("content", "")
-        formatted_text += f"{role}: {content}\n\n"
-
-    return formatted_text.strip()
-
-
 def main():
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -183,6 +160,14 @@ def main():
     dataset = dataset[:10]
     logger.info(f"Loaded {len(dataset)} test examples")
 
+    # Let's examine the dataset structure first
+    first_item = dataset[0]
+    logger.info(f"Dataset item structure: {type(first_item)}")
+    logger.info(
+        f"Dataset item keys: {first_item.keys() if hasattr(first_item, 'keys') else 'N/A'}"
+    )
+    logger.info(f"First dataset item: {first_item}")
+
     # Prepare for inference
     predictions = []
     ground_truth = []
@@ -190,68 +175,105 @@ def main():
     # Process each example
     logger.info("Starting inference...")
     for i, example in enumerate(tqdm(dataset)):
-        # Format conversation
-        input_text = format_conversation(example)
+        try:
+            # Extract conversation and parse if needed
+            if isinstance(example, dict) and "text" in example:
+                conversation = example["text"]
 
-        # Tokenize
-        inputs = tokenizer(
-            input_text, return_tensors="pt", truncation=True, max_length=4096
-        )
-        inputs = {k: v.to(device) for k, v in inputs.items()}
+                # If the conversation is a string, try to parse it as JSON
+                if isinstance(conversation, str):
+                    try:
+                        conversation = json.loads(conversation)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            f"Failed to parse conversation as JSON: {conversation[:50]}..."
+                        )
+                        continue
 
-        # Inference
-        with torch.no_grad():
-            outputs = model(**inputs)
-            logits = outputs.logits
+                # Use tokenizer's chat template to format the conversation
+                messages = conversation
+                formatted_text = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=False
+                )
+            else:
+                # If the structure is not what we expect, log and skip
+                logger.warning(f"Unexpected dataset structure: {example}")
+                continue
 
-            # Get predicted class (0-4)
-            predicted_class = torch.argmax(logits, dim=-1).item()
-            predictions.append(predicted_class)
+            # Tokenize
+            inputs = tokenizer(
+                formatted_text, return_tensors="pt", truncation=True, max_length=4096
+            )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
 
-            # Store ground truth
-            ground_truth.append(example["labels"])
+            # Inference
+            with torch.no_grad():
+                outputs = model(**inputs)
+                logits = outputs.logits
 
-        # Print some examples
-        if i < 5:  # Print first 5 examples
-            logger.info(f"\nExample {i+1}:")
-            logger.info(f"Input: {input_text[:100]}...")
-            logger.info(f"True label: {example['labels']}")
-            logger.info(f"Predicted: {predicted_class}")
+                # Get predicted class (0-4)
+                predicted_class = torch.argmax(logits, dim=-1).item()
+                predictions.append(predicted_class)
 
-            # Print all logits
-            probs = torch.softmax(logits, dim=-1)[0].cpu().numpy()
-            for cls_idx, prob in enumerate(probs):
-                logger.info(f"Class {cls_idx}: {prob:.4f}")
+                # Store ground truth
+                if isinstance(example, dict) and "labels" in example:
+                    ground_truth.append(example["labels"])
+                else:
+                    logger.warning(f"No labels found in example: {example}")
+                    continue
+
+            # Print some examples
+            if i < 5:  # Print first 5 examples
+                logger.info(f"\nExample {i+1}:")
+                logger.info(f"Input: {formatted_text[:100]}...")
+                logger.info(
+                    f"True label: {example['labels'] if isinstance(example, dict) and 'labels' in example else 'N/A'}"
+                )
+                logger.info(f"Predicted: {predicted_class}")
+
+                # Print all logits
+                probs = torch.softmax(logits, dim=-1)[0].cpu().numpy()
+                for cls_idx, prob in enumerate(probs):
+                    logger.info(f"Class {cls_idx}: {prob:.4f}")
+
+        except Exception as e:
+            logger.error(f"Error processing example {i}: {e}")
+            continue
 
     # Calculate metrics
-    predictions = np.array(predictions)
-    ground_truth = np.array(ground_truth)
+    if len(predictions) > 0 and len(ground_truth) > 0:
+        predictions = np.array(predictions)
+        ground_truth = np.array(ground_truth)
 
-    accuracy = accuracy_score(ground_truth, predictions)
-    mae = mean_absolute_error(ground_truth, predictions)
+        accuracy = accuracy_score(ground_truth, predictions)
+        mae = mean_absolute_error(ground_truth, predictions)
 
-    logger.info("\n===== Results =====")
-    logger.info(f"Accuracy: {accuracy:.4f}")
-    logger.info(f"Mean Absolute Error: {mae:.4f}")
-    logger.info("\nClassification Report:")
-    logger.info(classification_report(ground_truth, predictions))
+        logger.info("\n===== Results =====")
+        logger.info(f"Accuracy: {accuracy:.4f}")
+        logger.info(f"Mean Absolute Error: {mae:.4f}")
+        logger.info("\nClassification Report:")
+        logger.info(classification_report(ground_truth, predictions))
 
-    # Calculate error distribution
-    error_dist = np.abs(predictions - ground_truth)
+        # Calculate error distribution
+        error_dist = np.abs(predictions - ground_truth)
 
-    logger.info("\nError Distribution:")
-    for i in range(5):
-        pct = (error_dist == i).mean() * 100
-        logger.info(f"Error = {i}: {pct:.2f}%")
+        logger.info("\nError Distribution:")
+        for i in range(5):
+            pct = (error_dist == i).mean() * 100
+            logger.info(f"Error = {i}: {pct:.2f}%")
 
-    # Save predictions to file
-    output_file = "reward_model_predictions.csv"
-    with open(output_file, "w") as f:
-        f.write("true_label,predicted_label\n")
-        for gt, pred in zip(ground_truth, predictions):
-            f.write(f"{gt},{pred}\n")
+        # Save predictions to file
+        output_file = "reward_model_predictions.csv"
+        with open(output_file, "w") as f:
+            f.write("true_label,predicted_label\n")
+            for gt, pred in zip(ground_truth, predictions):
+                f.write(f"{gt},{pred}\n")
 
-    logger.info(f"Predictions saved to {output_file}")
+        logger.info(f"Predictions saved to {output_file}")
+    else:
+        logger.error(
+            "No valid predictions collected. Check the dataset format and processing."
+        )
 
 
 if __name__ == "__main__":
