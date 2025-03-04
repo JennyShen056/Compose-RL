@@ -5,7 +5,7 @@ import argparse
 import numpy as np
 from typing import List, Dict, Any, Optional, Union, Mapping, MutableMapping
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoConfig
 from torch import nn
 from tqdm import tqdm
 import logging
@@ -72,7 +72,7 @@ class RewardModel(nn.Module):
 
 
 class ClassifierRewardModel(RewardModel):
-    """Custom implementation of a classifier reward model for inference."""
+    """Custom classifier reward model for inference."""
 
     def __init__(
         self, model_path: str, base_model_path: str = "meta-llama/Llama-3.1-8B-Instruct"
@@ -89,19 +89,21 @@ class ClassifierRewardModel(RewardModel):
         else:
             local_model_path = model_path
 
-        # Load the model using Hugging Face transformers.
-        # If your checkpoint includes custom reward head code, you may need trust_remote_code=True.
+        # First load the configuration with trust_remote_code=True
+        config = AutoConfig.from_pretrained(local_model_path, trust_remote_code=True)
+        # Then load the model by passing the config
         self.model = AutoModelForSequenceClassification.from_pretrained(
             local_model_path,
+            config=config,
             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             trust_remote_code=True,
         )
 
-        # Set model parameters
+        # Set additional parameters
         self.return_lm_logits = False
         self.return_last = True
 
-        # Move model to device
+        # Move model to device and set eval mode
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.model.eval()
@@ -130,7 +132,7 @@ class ClassifierRewardModel(RewardModel):
                     # Multi-class: return raw logits
                     return {"scores": scores}
                 else:
-                    # Binary classification or regression: squeeze last dim
+                    # Binary/regression: squeeze last dim
                     return {"scores": scores.squeeze(-1)}
         else:
             raise NotImplementedError(
@@ -140,7 +142,7 @@ class ClassifierRewardModel(RewardModel):
 
 def parse_conversation_json(text: str) -> List[Dict[str, str]]:
     """
-    Parse conversation JSON string to list of message dictionaries.
+    Parse a conversation JSON string to a list of message dictionaries.
     """
     try:
         if isinstance(text, str):
@@ -193,7 +195,6 @@ def run_inference(
         labels = labels[:max_samples]
 
     results = []
-
     for i in tqdm(range(0, len(texts), batch_size), desc="Processing batches"):
         batch_texts = texts[i : i + batch_size]
         batch_labels = labels[i : i + batch_size] if labels is not None else None
@@ -202,22 +203,19 @@ def run_inference(
         for text in batch_texts:
             try:
                 conversation = parse_conversation_json(text)
-                # Use apply_chat_template if available; if not, simply join messages.
-                # Here we check if the tokenizer has an apply_chat_template method.
+                # Use the tokenizer's apply_chat_template if available; otherwise join messages.
                 if hasattr(tokenizer, "apply_chat_template"):
                     formatted_text = tokenizer.apply_chat_template(
                         conversation, tokenize=False, add_generation_prompt=False
                     )
                 else:
-                    # Fallback: join the conversation messages.
                     formatted_text = " ".join(
                         [msg.get("content", "") for msg in conversation]
                     )
                 processed_texts.append(formatted_text)
             except Exception as e:
                 logger.error(f"Error processing text: {e}")
-                fallback_text = "Hello"
-                processed_texts.append(fallback_text)
+                processed_texts.append("Hello")
 
         inputs = tokenizer(
             processed_texts,
@@ -226,7 +224,6 @@ def run_inference(
             truncation=True,
             return_tensors="pt",
         )
-
         inputs = {key: tensor.to(model.device) for key, tensor in inputs.items()}
         inputs["is_inference"] = True
 
