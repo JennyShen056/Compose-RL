@@ -1,66 +1,29 @@
 import os
+import sys
 import torch
-from transformers import AutoTokenizer, AutoConfig, AutoModelForSequenceClassification
+import logging
+import json
+import numpy as np
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from datasets import load_dataset
 from tqdm import tqdm
-import numpy as np
 from sklearn.metrics import accuracy_score, mean_absolute_error, classification_report
-import json
 import boto3
 from botocore.exceptions import ClientError
-import logging
-import sys
 
-# Add Compose-RL to path if needed
-compose_rl_path = "/Compose-RL"
-if compose_rl_path not in sys.path:
-    sys.path.append(compose_rl_path)
-
-from compose_rl.reward_learning.modeling_hf import ComposerHFSequenceClassification
-from compose_rl.reward_learning.model_methods import ClassifierRewardEnum
-
-logging.basicConfig(level=logging.INFO)
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
-
-
-class ComposerHFClassifierRewardModel(ComposerHFSequenceClassification):
-    """Implementation matching your trained model architecture"""
-
-    def __init__(
-        self,
-        tokenizer,
-        use_train_metrics=True,
-        additional_train_metrics=None,
-        additional_eval_metrics=None,
-        loss_type="bce",
-        return_lm_logits=False,
-        return_last=True,
-        **kwargs,
-    ):
-        self.loss_type = ClassifierRewardEnum(loss_type)
-        self.return_lm_logits = return_lm_logits
-        self.return_last = return_last
-
-        config_overrides = {
-            "num_labels": 5,  # For 0-4 range
-            "return_logits": return_lm_logits,
-        }
-
-        if "config_overrides" in kwargs:
-            config_overrides.update(kwargs.pop("config_overrides"))
-
-        super().__init__(
-            tokenizer=tokenizer,
-            use_train_metrics=use_train_metrics,
-            additional_train_metrics=additional_train_metrics,
-            additional_eval_metrics=additional_eval_metrics,
-            config_overrides=config_overrides,
-            **kwargs,
-        )
 
 
 def download_from_s3(bucket_name, s3_prefix, local_dir):
     """Download model files from S3 to local directory"""
+    logger.info(
+        f"Downloading model files from s3://{bucket_name}/{s3_prefix} to {local_dir}"
+    )
+
     s3_client = boto3.client("s3")
 
     # Create local directory if it doesn't exist
@@ -68,30 +31,45 @@ def download_from_s3(bucket_name, s3_prefix, local_dir):
 
     try:
         # List objects in the S3 bucket with the given prefix
-        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=s3_prefix)
+        paginator = s3_client.get_paginator("list_objects_v2")
 
-        if "Contents" in response:
-            for obj in response["Contents"]:
+        for page in paginator.paginate(Bucket=bucket_name, Prefix=s3_prefix):
+            if "Contents" not in page:
+                continue
+
+            for obj in page["Contents"]:
                 key = obj["Key"]
+
+                # Skip directories
+                if key.endswith("/"):
+                    continue
+
                 # Create local subdirectories if needed
                 rel_path = key[len(s3_prefix) :].lstrip("/")
                 local_file_path = os.path.join(local_dir, rel_path)
+
                 os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
 
                 # Download the file
                 logger.info(f"Downloading {key} to {local_file_path}")
                 s3_client.download_file(bucket_name, key, local_file_path)
-            logger.info(
-                f"Downloaded all files from s3://{bucket_name}/{s3_prefix} to {local_dir}"
-            )
-        else:
-            logger.warning(f"No objects found in s3://{bucket_name}/{s3_prefix}")
+
+        logger.info(f"Download complete")
+
+        # Verify downloaded files
+        if os.path.exists(local_dir):
+            files = os.listdir(local_dir)
+            logger.info(f"Files in {local_dir}: {files}")
+            if "config.json" in files:
+                logger.info("Found config.json - model download appears successful")
+            else:
+                logger.warning("config.json not found - model might not be complete")
+
+        return True
 
     except ClientError as e:
         logger.error(f"Error downloading from S3: {e}")
         return False
-
-    return True
 
 
 def format_conversation(example):
@@ -125,71 +103,81 @@ def main():
     # Model paths
     s3_bucket = "mybucket-jenny-test"
     s3_prefix = "rlhf-checkpoints/reg-rm/hf/huggingface/ba125/"
-    local_model_dir = "./reward_model"
+    local_model_dir = "/tmp/reward_model"
 
-    # You can uncomment to download the model
-    # download_from_s3(s3_bucket, s3_prefix, local_model_dir)
+    # First make sure the model is downloaded
+    download_success = download_from_s3(s3_bucket, s3_prefix, local_model_dir)
 
-    # Use local path if available, otherwise try s3 path
-    model_path = (
-        local_model_dir
-        if os.path.exists(local_model_dir)
-        else f"s3://{s3_bucket}/{s3_prefix}"
-    )
+    if not download_success:
+        logger.error("Failed to download model from S3. Exiting.")
+        return
 
-    # Initialize tokenizer
+    # Check what files we have
+    logger.info(f"Files in model directory: {os.listdir(local_model_dir)}")
+
+    # Load tokenizer
     logger.info("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
-        "meta-llama/Meta-Llama-3.1-8B-Instruct", use_auth_token=True
+        "meta-llama/Meta-Llama-3.1-8B-Instruct", token=os.environ["HF_TOKEN"]
     )
 
-    # Approach 1: Load directly with AutoModelForSequenceClassification
-    logger.info("Loading model using AutoModelForSequenceClassification...")
+    # Simply try to load the model with AutoModelForSequenceClassification
     try:
-        # Load model directly with AutoModelForSequenceClassification
+        logger.info(f"Loading model from {local_model_dir}")
         model = AutoModelForSequenceClassification.from_pretrained(
-            model_path, trust_remote_code=True, use_auth_token=True
+            local_model_dir, trust_remote_code=True, token=os.environ["HF_TOKEN"]
         )
-        direct_load_success = True
+        logger.info("Model loaded successfully")
     except Exception as e:
-        logger.error(f"Error loading with AutoModelForSequenceClassification: {e}")
-        direct_load_success = False
+        # If direct loading fails, try initializing with base model and num_labels=5
+        logger.warning(f"Error loading model directly: {e}")
+        logger.info("Trying to load base model and then load classifier head...")
 
-    if not direct_load_success:
-        # Approach 2: If Approach 1 fails, try with custom class
-        logger.info(
-            "Attempting to load with custom ComposerHFClassifierRewardModel class..."
-        )
         try:
-            # Load config
-            config = AutoConfig.from_pretrained(
+            # Initialize with base model
+            model = AutoModelForSequenceClassification.from_pretrained(
                 "meta-llama/Meta-Llama-3.1-8B-Instruct",
                 num_labels=5,
                 trust_remote_code=True,
-                use_auth_token=True,
+                token=os.environ["HF_TOKEN"],
             )
 
-            # Initialize model with config first
-            model = ComposerHFClassifierRewardModel(
-                tokenizer=tokenizer,
-                config=config,
-                loss_type="bce",
-                return_last=True,
-                pretrained=True,
-            )
+            # Look for state dict files
+            state_dict_files = [
+                f
+                for f in os.listdir(local_model_dir)
+                if f.endswith(".bin") or f.endswith(".pt") or f.endswith(".safetensors")
+            ]
 
-            # Then load state dict
-            state_dict = torch.load(f"{local_model_dir}/pytorch_model.bin")
-            model.load_state_dict(state_dict)
+            if state_dict_files:
+                # Try to load state dict
+                for file in state_dict_files:
+                    try:
+                        logger.info(f"Attempting to load state dict from {file}")
+                        if file.endswith(".safetensors"):
+                            from safetensors.torch import load_file
+
+                            state_dict = load_file(os.path.join(local_model_dir, file))
+                        else:
+                            state_dict = torch.load(os.path.join(local_model_dir, file))
+
+                        # Try to load
+                        model.load_state_dict(state_dict, strict=False)
+                        logger.info(f"Successfully loaded state dict from {file}")
+                        break
+                    except Exception as e2:
+                        logger.warning(f"Failed to load state dict from {file}: {e2}")
+            else:
+                logger.error("No state dict files found in model directory")
+                return
         except Exception as e:
-            logger.error(f"Error loading with custom class: {e}")
-            logger.error("Both loading approaches failed. Exiting.")
+            logger.error(f"Error initializing base model: {e}")
             return
 
     model.to(device)
     model.eval()
 
-    # Load the Jennny/Helpfulness dataset test split
+    # Load the dataset
     logger.info("Loading Helpfulness dataset...")
     dataset = load_dataset("Jennny/Helpfulness", split="test", use_auth_token=True)
     logger.info(f"Loaded {len(dataset)} test examples")
@@ -212,22 +200,8 @@ def main():
 
         # Inference
         with torch.no_grad():
-            # Handle different model types
-            if direct_load_success:
-                # Standard HF model
-                outputs = model(**inputs)
-                logits = outputs.logits
-            else:
-                # Custom model
-                batch = {
-                    "input_ids": inputs["input_ids"],
-                    "attention_mask": inputs["attention_mask"],
-                    "is_inference": True,
-                }
-                outputs = model.forward(batch)
-                logits = (
-                    outputs if isinstance(outputs, torch.Tensor) else outputs.logits
-                )
+            outputs = model(**inputs)
+            logits = outputs.logits
 
             # Get predicted class (0-4)
             predicted_class = torch.argmax(logits, dim=-1).item()
@@ -276,7 +250,7 @@ def main():
         for gt, pred in zip(ground_truth, predictions):
             f.write(f"{gt},{pred}\n")
 
-    logger.info(f"\nPredictions saved to {output_file}")
+    logger.info(f"Predictions saved to {output_file}")
 
 
 if __name__ == "__main__":
