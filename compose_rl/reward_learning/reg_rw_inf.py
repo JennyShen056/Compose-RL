@@ -1,27 +1,27 @@
 """Inference model for loading and using the ClassifierRewardModel trained with ComposeRL."""
 
 import os
+import json
 import logging
 from typing import Dict, Optional, Union, List, Any
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
-    PreTrainedModel,
-    PreTrainedTokenizer,
-)
-from transformers.modeling_outputs import SequenceClassifierOutput
+from transformers import AutoTokenizer, PreTrainedTokenizer
+
+# Import the necessary ComposeRL classes
+from compose_rl.reward_learning.model import ComposerHFClassifierRewardModel
+from compose_rl.reward_learning.hf_utils import RewardModelConfig
+from compose_rl.reward_learning.base_reward import RewardModel
 
 logger = logging.getLogger(__name__)
 
 
-class LlamaClassifierRewardModel:
+class ClassifierRewardInference:
     """
-    A wrapper class for loading and using a trained ClassifierRewardModel for inference.
-    This focuses only on the reward head component without LLM generation.
+    Wrapper class for loading and using a trained ClassifierRewardModel from ComposeRL
+    for inference.
     """
 
     def __init__(
@@ -65,21 +65,34 @@ class LlamaClassifierRewardModel:
             except Exception as e:
                 raise RuntimeError(f"Failed to download model from S3: {e}")
 
-        # Load tokenizer and model
+        # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-        # Load the model with sequence classification head
-        logger.info(f"Loading model from {model_path}")
-        self.model = AutoModelForSequenceClassification.from_pretrained(
-            model_path, torch_dtype=self.torch_dtype, device_map=self.device
-        )
-        self.model.eval()
+        # Load the configuration
+        config_path = os.path.join(model_path, "config.json")
+        with open(config_path, "r") as f:
+            config_dict = json.load(f)
 
-        # Check number of labels for the classifier
-        self.num_labels = getattr(
-            self.model.config, "num_labels", 5
-        )  # Default to 5 for 0-4 range
+        # Create RewardModelConfig instance
+        config = RewardModelConfig(**config_dict)
+
+        # Determine number of labels from config
+        self.num_labels = getattr(config, "num_labels", 5)  # Default to 5 for 0-4 range
         logger.info(f"Loaded classifier model with {self.num_labels} labels")
+
+        # Create model instance
+        self.model = ComposerHFClassifierRewardModel(
+            tokenizer=self.tokenizer,
+            pretrained_model_name_or_path=model_path,
+            loss_type="bce",  # From your config
+            config_overrides={"num_labels": self.num_labels},
+        )
+
+        # Move model to correct device
+        if torch_dtype:
+            self.model.to(dtype=torch_dtype)
+        self.model.to(device)
+        self.model.eval()
 
     def get_reward(
         self, prompts: Union[str, List[str]], responses: Union[str, List[str]], **kwargs
@@ -123,25 +136,30 @@ class LlamaClassifierRewardModel:
         # Move inputs to the correct device
         tokenized_inputs = {k: v.to(self.device) for k, v in tokenized_inputs.items()}
 
+        # Add is_inference flag for model's forward method
+        tokenized_inputs["is_inference"] = True
+
         # Get model outputs
         with torch.no_grad():
-            outputs = self.model(**tokenized_inputs)
+            # Use model's forward method which handles the custom reward model format
+            outputs = self.model.forward(tokenized_inputs)
 
-        # Get scores based on model output type
+        # Process scores based on model output type
         if self.num_labels == 1:
             # Regression model (direct score)
-            scores = outputs.logits.squeeze(-1)
+            scores = outputs.view(-1)
         else:
             # Classification model
-            # For a classifier with numerical ratings (e.g., 0-4 scale),
-            # we can either take the expected value or the class with highest probability
-
-            # Expected value approach (weighted average of class values)
-            probs = F.softmax(outputs.logits, dim=1)
-            class_values = torch.arange(
-                0, self.num_labels, device=self.device, dtype=self.torch_dtype
-            )
-            scores = torch.sum(probs * class_values.unsqueeze(0), dim=1)
+            # We need to check if outputs is already post-processed or needs softmax
+            if isinstance(outputs, torch.Tensor) and outputs.dim() > 1:
+                probs = F.softmax(outputs, dim=1)
+                class_values = torch.arange(
+                    0, self.num_labels, device=self.device, dtype=torch.float
+                )
+                scores = torch.sum(probs * class_values.unsqueeze(0), dim=1)
+            else:
+                # Outputs might already be processed
+                scores = outputs.view(-1)
 
         return scores
 
@@ -162,31 +180,39 @@ class LlamaClassifierRewardModel:
             if k in ["input_ids", "attention_mask"]
         }
 
+        # Add is_inference flag for model's forward method
+        batch["is_inference"] = True
+
         # Get model outputs
         with torch.no_grad():
-            outputs = self.model(**batch)
+            # Use the model's forward method which is designed for the custom reward model
+            outputs = self.model.forward(batch)
 
-        # Get scores based on model output type
+        # Process scores based on model output type
         if self.num_labels == 1:
             # Regression model (direct score)
-            scores = outputs.logits.squeeze(-1)
+            scores = outputs.view(-1)
         else:
-            # Classification model with expected value
-            probs = F.softmax(outputs.logits, dim=1)
-            class_values = torch.arange(
-                0, self.num_labels, device=self.device, dtype=self.torch_dtype
-            )
-            scores = torch.sum(probs * class_values.unsqueeze(0), dim=1)
+            # Classification model
+            if isinstance(outputs, torch.Tensor) and outputs.dim() > 1:
+                probs = F.softmax(outputs, dim=1)
+                class_values = torch.arange(
+                    0, self.num_labels, device=self.device, dtype=torch.float
+                )
+                scores = torch.sum(probs * class_values.unsqueeze(0), dim=1)
+            else:
+                # Outputs might already be processed
+                scores = outputs.view(-1)
 
         return scores
 
 
-# Example usage
-if __name__ == "__main__":
+# Example of usage in your reg_rw_inf.py or another script
+def main():
     model_path = (
         "s3://mybucket-jenny-test/rlhf-checkpoints/reg-rm/hf/huggingface/ba125/"
     )
-    reward_model = LlamaClassifierRewardModel(model_path)
+    reward_model = ClassifierRewardInference(model_path)
 
     # Example prompt-response pairs
     prompts = [
@@ -201,3 +227,7 @@ if __name__ == "__main__":
     # Get reward scores
     scores = reward_model.get_reward(prompts, responses)
     print(f"Reward scores: {scores}")
+
+
+if __name__ == "__main__":
+    main()
